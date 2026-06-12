@@ -1,0 +1,168 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
+enum AuthType {
+  NONE
+  BEARER_TOKEN
+  API_KEY_HEADER
+  BASIC
+}
+
+enum FieldType {
+  TEXT
+  TEXTAREA
+  RICH_TEXT
+  NUMBER
+  BOOLEAN
+  DATE
+  DATETIME
+  SELECT
+  MULTI_SELECT
+  RADIO
+  EMAIL
+  URL
+  PASSWORD
+  FILE
+  IMAGE
+  JSON
+  RELATION
+  COLOR
+  SLUG
+}
+
+enum MenuItemType {
+  GROUP
+  RESOURCE
+  LINK
+  DIVIDER
+}
+
+enum ActivityAction {
+  CREATE
+  UPDATE
+  DELETE
+  CONFIG_CHANGE
+}
+
+model User {
+  id           String        @id @default(cuid())
+  email        String        @unique
+  passwordHash String
+  name         String
+  role         Role          @default(VIEWER)
+  isActive     Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  activityLogs ActivityLog[]
+}
+
+model ApiConnection {
+  id             String     @id @default(cuid())
+  name           String
+  baseUrl        String
+  authType       AuthType   @default(NONE)
+  // Encrypted JSON blob (AES-256-GCM): token / headerName+key / username+password
+  authConfig     String?
+  defaultHeaders Json?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  resources      Resource[]
+}
+
+model Resource {
+  id              String          @id @default(cuid())
+  name            String
+  slug            String          @unique
+  icon            String?
+  apiConnectionId String
+  apiConnection   ApiConnection   @relation(fields: [apiConnectionId], references: [id], onDelete: Restrict)
+  // { list: {method,path}, getOne: {...}, create: {...}, update: {...}, delete: {...} }
+  endpoints       Json
+  primaryKeyField String          @default("id")
+  titleField      String          @default("name")
+  // { create: bool, update: bool, delete: bool, view: bool }
+  capabilities    Json
+  // { create: Role, update: Role, delete: Role, view: Role } — minimum role per operation
+  permissions     Json
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  fields          FieldDefinition[]
+  menuItems       MenuItem[]
+}
+
+model FieldDefinition {
+  id          String    @id @default(cuid())
+  resourceId  String
+  resource    Resource  @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  key         String
+  label       String
+  type        FieldType
+  order       Int       @default(0)
+  // Type-specific config: options, optionsSource, relation, min/max, accept, ...
+  config      Json?
+  // { required: bool, minLength, maxLength, pattern, min, max, messages: {...} }
+  validation  Json?
+  // Form settings
+  showInForm  Boolean   @default(true)
+  placeholder String?
+  helpText    String?
+  defaultValue String?
+  readOnly    Boolean   @default(false)
+  width       String    @default("full") // full | half | third
+  // { field, operator: eq|neq|in|truthy, value } — show only when condition matches
+  visibleIf   Json?
+  // Table settings
+  showInTable Boolean   @default(true)
+  sortable    Boolean   @default(false)
+  filterable  Boolean   @default(false)
+  tableOrder  Int       @default(0)
+  format      String    @default("text") // text|badge|date|datetime|currency|boolean-icon|image-thumb|truncate|link
+  // { value: color } for badge format
+  badgeColorMap Json?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([resourceId, key])
+}
+
+model MenuItem {
+  id             String       @id @default(cuid())
+  label          String
+  icon           String?
+  order          Int          @default(0)
+  parentId       String?
+  parent         MenuItem?    @relation("MenuNesting", fields: [parentId], references: [id], onDelete: Cascade)
+  children       MenuItem[]   @relation("MenuNesting")
+  type           MenuItemType @default(RESOURCE)
+  resourceId     String?
+  resource       Resource?    @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  href           String?
+  // JSON array of roles; null = visible to all
+  visibleToRoles Json?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+model ActivityLog {
+  id           String         @id @default(cuid())
+  userId       String
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action       ActivityAction
+  resourceSlug String?
+  recordId     String?
+  detail       Json?
+  createdAt    DateTime       @default(now())
+}
