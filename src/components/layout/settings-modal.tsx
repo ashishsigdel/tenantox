@@ -101,7 +101,7 @@ export function SettingsModal({
         aria-modal="true"
         aria-label="Settings"
         hidden={closing}
-        className="relative flex h-full w-full overflow-hidden bg-background shadow-lg ring-1 ring-border sm:h-[85vh] sm:max-w-5xl sm:rounded-xl"
+        className="relative flex h-full w-full overflow-hidden bg-background shadow-lg ring-1 ring-border sm:h-[calc(100vh-4rem)] sm:max-w-[calc(100%-4rem)] sm:rounded-xl"
       >
         <aside className="flex w-48 shrink-0 flex-col gap-3 border-r bg-sidebar p-3 sm:w-60 sm:p-4">
           <h2 className="px-2 text-sm font-semibold text-sidebar-foreground">

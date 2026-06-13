@@ -84,7 +84,7 @@ export function AppSidebar({ menu }: { menu: MenuNode[] }) {
                 <div className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
                   <LayoutDashboard className="size-4" />
                 </div>
-                <span className="font-semibold">Admin Dashboard</span>
+                <span className="font-semibold">Tenantox</span>
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>

@@ -108,6 +108,8 @@ export async function deletePage(id: string): Promise<ActionResult> {
 
 const httpMethod = z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 
+const width = z.enum(["full", "half", "third"]);
+
 const dataSourceSchema = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("resource"), resourceId: z.string().min(1) }),
   z.object({
@@ -118,10 +120,15 @@ const dataSourceSchema = z.discriminatedUnion("mode", [
     rootPath: z.string().optional(),
     query: z.record(z.string(), z.string()).optional(),
   }),
+  z.object({
+    mode: z.literal("group"),
+    rootPath: z.string().optional(),
+  }),
 ]);
 
 const blockNodeSchema = z.object({
   id: z.string().min(1),
+  kind: z.literal("block").optional(),
   type: z.enum([
     "TABLE",
     "CHART",
@@ -132,16 +139,40 @@ const blockNodeSchema = z.object({
     "DIVIDER",
     "CALLOUT",
   ]),
-  width: z.enum(["full", "half", "third"]),
+  width,
   config: z.record(z.string(), z.unknown()).nullable(),
   dataSource: dataSourceSchema.nullable(),
   visibleToRoles: z.array(ROLE).nullable(),
 });
 
+const groupSourceSchema = z.object({
+  connectionId: z.string().min(1),
+  method: httpMethod,
+  path: z.string().min(1),
+  query: z.record(z.string(), z.string()).optional(),
+});
+
+const groupNodeSchema = z.object({
+  id: z.string().min(1),
+  kind: z.literal("group"),
+  width,
+  config: z.object({
+    title: z.string().optional(),
+    columns: z
+      .union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(6)])
+      .optional(),
+  }),
+  source: groupSourceSchema.nullable(),
+  children: z.array(blockNodeSchema),
+  visibleToRoles: z.array(ROLE).nullable(),
+});
+
+const layoutNodeSchema = z.union([groupNodeSchema, blockNodeSchema]);
+
 const sectionSchema = z.object({
   id: z.string().min(1),
   kind: z.literal("section"),
-  children: z.array(blockNodeSchema),
+  children: z.array(layoutNodeSchema),
 });
 
 const layoutSchema = z.object({

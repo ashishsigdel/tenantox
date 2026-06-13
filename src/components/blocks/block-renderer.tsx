@@ -1,3 +1,5 @@
+"use client";
+
 import { ResourceTable } from "@/components/resource/resource-table";
 import type {
   BlockDef,
@@ -12,6 +14,7 @@ import { ChartBlock } from "./chart-block";
 import { StatBlock } from "./stat-block";
 import { ButtonBlock } from "./button-block";
 import { CalloutBlock } from "./callout-block";
+import { DataTableBlock } from "./data-table-block";
 import { Markdown } from "./markdown";
 
 /** Maps a block definition to its rendered output. */
@@ -28,6 +31,10 @@ export function BlockRenderer({
 }) {
   switch (block.type) {
     case "TABLE":
+      // Inside a group, a table renders read-only rows from the group's data.
+      if (block.dataSource?.mode === "group") {
+        return <DataTableBlock block={block} />;
+      }
       return resource ? (
         <ResourceTable resource={resource} role={role} />
       ) : (

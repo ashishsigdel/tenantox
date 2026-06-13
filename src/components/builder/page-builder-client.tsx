@@ -54,23 +54,42 @@ import { cn } from "@/lib/utils";
 import { savePageLayout } from "@/server/actions/pages";
 import { Markdown } from "@/components/blocks/markdown";
 import { CalloutBlock } from "@/components/blocks/callout-block";
+import { isGroup } from "@/types/meta";
 import type {
   BlockDef,
   CalloutConfig,
+  GroupDef,
   HeadingConfig,
+  LayoutNode,
   PageLayout,
   TextConfig,
 } from "@/types/meta";
 import type { BlockType } from "@prisma/client";
 
-import { BLOCK_TYPES, blockSummary, blockTypeMeta } from "./block-types";
-import { BlockEditorSheet } from "./block-editor-sheet";
+import {
+  BLOCK_TYPES,
+  GROUP_META,
+  blockSummary,
+  blockTypeMeta,
+  type InsertKind,
+} from "./block-types";
+import { BlockEditorSheet, type EditorTarget } from "./block-editor-sheet";
 
 type Connection = { id: string; name: string };
 type ResourceOption = { id: string; name: string; slug: string };
-type Draft = Omit<BlockDef, "id">;
-type Editing = { block: BlockDef } | { newType: BlockType; atIndex: number } | null;
+type BlockDraft = Omit<BlockDef, "id">;
+type GroupDraft = Omit<GroupDef, "id">;
 type SaveStatus = "idle" | "saving" | "saved" | "error";
+
+type Editing =
+  | { kind: "block"; block: BlockDef; groupId: string | null }
+  | { kind: "newBlock"; type: BlockType; atIndex: number; groupId: string | null }
+  | { kind: "group"; group: GroupDef }
+  | { kind: "newGroup"; atIndex: number }
+  | null;
+
+type MenuTarget = { groupId: string | null; atIndex: number };
+type DeleteTarget = { node: LayoutNode; groupId: string | null } | null;
 
 const WIDTH_CLASS: Record<BlockDef["width"], string> = {
   full: "md:col-span-6",
@@ -78,29 +97,28 @@ const WIDTH_CLASS: Record<BlockDef["width"], string> = {
   third: "md:col-span-2",
 };
 
-/** Returns a short reason the block is misconfigured, or null when it's fine. */
+/** Returns a short reason a block is misconfigured, or null when it's fine. */
 function blockIssue(block: BlockDef): string | null {
   const cfg = (block.config ?? {}) as Record<string, unknown>;
   const ds = block.dataSource;
+  const bound =
+    ds?.mode === "group" || (ds?.mode === "raw" && !!ds.connectionId && !!ds.path);
   switch (block.type) {
     case "TABLE":
+      if (ds?.mode === "group") return null;
       return ds?.mode === "resource" && ds.resourceId
         ? null
         : "Not linked to a resource";
     case "CHART": {
-      if (ds?.mode !== "raw" || !ds.connectionId || !ds.path)
-        return "Needs a data source";
+      if (!bound) return "Needs a data source";
       const series = (cfg.series as { yPath?: string }[] | undefined) ?? [];
       return series.length && series.every((s) => s.yPath)
         ? null
         : "Series missing a value path";
     }
     case "STAT": {
-      if (ds?.mode !== "raw" || !ds.connectionId || !ds.path)
-        return "Needs a data source";
-      const metrics =
-        (cfg.metrics as { valuePath?: string; aggregate?: string }[] | undefined) ??
-        [];
+      if (!bound) return "Needs a data source";
+      const metrics = (cfg.metrics as unknown[] | undefined) ?? [];
       return metrics.length ? null : "Add at least one metric";
     }
     case "BUTTON":
@@ -112,7 +130,15 @@ function blockIssue(block: BlockDef): string | null {
   }
 }
 
-/** Lightweight live preview used inside the builder canvas. */
+function groupIssue(group: GroupDef): string | null {
+  if (!group.source || !group.source.connectionId || !group.source.path) {
+    return "Needs a data source";
+  }
+  if (group.children.length === 0) return "Empty group";
+  return null;
+}
+
+/** Lightweight live preview used inside the builder canvas for content blocks. */
 function CanvasPreview({ block }: { block: BlockDef }) {
   const cfg = (block.config ?? {}) as Record<string, unknown>;
   switch (block.type) {
@@ -140,7 +166,6 @@ function CanvasPreview({ block }: { block: BlockDef }) {
         />
       );
     default: {
-      // Data blocks: a labeled placeholder (real data shows on the live page).
       const meta = blockTypeMeta(block.type);
       return (
         <div className="flex items-center gap-3 rounded-md border border-dashed bg-muted/40 px-3 py-4">
@@ -157,23 +182,20 @@ function CanvasPreview({ block }: { block: BlockDef }) {
   }
 }
 
-function SortableBlock({
-  block,
-  selected,
-  onSelect,
-  onEdit,
-  onDuplicate,
-  onInsertAfter,
-  onDelete,
-}: {
-  block: BlockDef;
+type BlockActions = {
   selected: boolean;
   onSelect: () => void;
   onEdit: () => void;
   onDuplicate: () => void;
   onInsertAfter: () => void;
   onDelete: () => void;
-}) {
+};
+
+function BlockCard({
+  block,
+  grid,
+  ...actions
+}: { block: BlockDef; grid: boolean } & BlockActions) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: block.id });
   const issue = blockIssue(block);
@@ -182,17 +204,18 @@ function SortableBlock({
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={cn("col-span-1 min-w-0", WIDTH_CLASS[block.width])}
+      className={cn("col-span-1 min-w-0", grid && WIDTH_CLASS[block.width])}
     >
       <div
-        onClick={onSelect}
+        onClick={actions.onSelect}
         className={cn(
           "group relative rounded-lg border bg-background p-3 transition-colors",
-          selected ? "border-primary ring-1 ring-primary" : "hover:border-foreground/20",
+          actions.selected
+            ? "border-primary ring-1 ring-primary"
+            : "hover:border-foreground/20",
           isDragging && "z-10 opacity-70 shadow-lg",
         )}
       >
-        {/* hover toolbar */}
         <div className="absolute right-2 top-2 z-10 flex items-center gap-0.5 rounded-md border bg-background opacity-0 shadow-sm transition-opacity group-hover:opacity-100">
           <button
             className="cursor-grab touch-none p-1.5 text-muted-foreground"
@@ -203,16 +226,16 @@ function SortableBlock({
           >
             <GripVertical className="size-3.5" />
           </button>
-          <ToolbarBtn label="Edit" onClick={onEdit}>
+          <ToolbarBtn label="Edit" onClick={actions.onEdit}>
             <Pencil className="size-3.5" />
           </ToolbarBtn>
-          <ToolbarBtn label="Duplicate" onClick={onDuplicate}>
+          <ToolbarBtn label="Duplicate" onClick={actions.onDuplicate}>
             <Copy className="size-3.5" />
           </ToolbarBtn>
-          <ToolbarBtn label="Insert below" onClick={onInsertAfter}>
+          <ToolbarBtn label="Insert below" onClick={actions.onInsertAfter}>
             <Plus className="size-3.5" />
           </ToolbarBtn>
-          <ToolbarBtn label="Delete" onClick={onDelete} destructive>
+          <ToolbarBtn label="Delete" onClick={actions.onDelete} destructive>
             <Trash2 className="size-3.5" />
           </ToolbarBtn>
         </div>
@@ -233,6 +256,136 @@ function SortableBlock({
           ) : null}
         </div>
         <CanvasPreview block={block} />
+      </div>
+    </div>
+  );
+}
+
+function GroupCard({
+  group,
+  selected,
+  onSelect,
+  onEdit,
+  onDuplicate,
+  onInsertAfter,
+  onDelete,
+  onAddChild,
+  childActions,
+  onChildDragEnd,
+  sensors,
+}: {
+  group: GroupDef;
+  selected: boolean;
+  onSelect: () => void;
+  onEdit: () => void;
+  onDuplicate: () => void;
+  onInsertAfter: () => void;
+  onDelete: () => void;
+  onAddChild: () => void;
+  childActions: (child: BlockDef, index: number) => BlockActions;
+  onChildDragEnd: (event: DragEndEvent) => void;
+  sensors: ReturnType<typeof useSensors>;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: group.id });
+  const issue = groupIssue(group);
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={cn("col-span-1 min-w-0", WIDTH_CLASS[group.width])}
+    >
+      <div
+        onClick={onSelect}
+        className={cn(
+          "group/grp relative rounded-lg border-2 border-dashed bg-muted/20 p-3 transition-colors",
+          selected ? "border-primary" : "hover:border-foreground/20",
+          isDragging && "z-10 opacity-70 shadow-lg",
+        )}
+      >
+        <div className="absolute right-2 top-2 z-10 flex items-center gap-0.5 rounded-md border bg-background opacity-0 shadow-sm transition-opacity group-hover/grp:opacity-100">
+          <button
+            className="cursor-grab touch-none p-1.5 text-muted-foreground"
+            {...attributes}
+            {...listeners}
+            onClick={(e) => e.stopPropagation()}
+            aria-label="Drag"
+          >
+            <GripVertical className="size-3.5" />
+          </button>
+          <ToolbarBtn label="Edit group" onClick={onEdit}>
+            <Pencil className="size-3.5" />
+          </ToolbarBtn>
+          <ToolbarBtn label="Duplicate" onClick={onDuplicate}>
+            <Copy className="size-3.5" />
+          </ToolbarBtn>
+          <ToolbarBtn label="Insert below" onClick={onInsertAfter}>
+            <Plus className="size-3.5" />
+          </ToolbarBtn>
+          <ToolbarBtn label="Delete" onClick={onDelete} destructive>
+            <Trash2 className="size-3.5" />
+          </ToolbarBtn>
+        </div>
+
+        <div className="mb-2 flex items-center gap-2">
+          <DynamicIcon name={GROUP_META.icon} className="size-4 text-muted-foreground" />
+          <span className="text-sm font-medium">
+            {group.config.title || "Group"}
+          </span>
+          <Badge variant="outline" className="text-[10px]">
+            {group.config.columns ?? 2} col
+          </Badge>
+          <Badge variant="outline" className="text-[10px] font-mono">
+            {group.source?.path || "no source"}
+          </Badge>
+          {issue ? (
+            <span className="flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400">
+              <AlertTriangle className="size-3" /> {issue}
+            </span>
+          ) : null}
+        </div>
+
+        {group.children.length === 0 ? (
+          <div className="rounded-md border border-dashed p-6 text-center text-xs text-muted-foreground">
+            Empty group — add blocks that read from its API call.
+          </div>
+        ) : (
+          <DndContext
+            id={`group-${group.id}`}
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={onChildDragEnd}
+          >
+            <SortableContext
+              items={group.children.map((c) => c.id)}
+              strategy={rectSortingStrategy}
+            >
+              <div className="space-y-2">
+                {group.children.map((child, i) => (
+                  <BlockCard
+                    key={child.id}
+                    block={child}
+                    grid={false}
+                    {...childActions(child, i)}
+                  />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
+        )}
+
+        <Button
+          variant="outline"
+          size="sm"
+          className="mt-2"
+          onClick={(e) => {
+            e.stopPropagation();
+            onAddChild();
+          }}
+        >
+          <Plus className="size-4" /> Add block to group
+        </Button>
       </div>
     </div>
   );
@@ -267,6 +420,21 @@ function ToolbarBtn({
   );
 }
 
+/** Deep-clones a node with fresh ids (group children get new ids too). */
+function cloneNode(node: LayoutNode): LayoutNode {
+  if (isGroup(node)) {
+    return {
+      ...structuredClone(node),
+      id: crypto.randomUUID(),
+      children: node.children.map((c) => ({
+        ...structuredClone(c),
+        id: crypto.randomUUID(),
+      })),
+    };
+  }
+  return { ...structuredClone(node), id: crypto.randomUUID() };
+}
+
 export function PageBuilderClient({
   pageId,
   layout,
@@ -279,12 +447,12 @@ export function PageBuilderClient({
   resources: ResourceOption[];
 }) {
   const rootId = layout.root.id;
-  const [blocks, setBlocks] = useState<BlockDef[]>(layout.root.children);
+  const [nodes, setNodes] = useState<LayoutNode[]>(layout.root.children);
   const [editing, setEditing] = useState<Editing>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<BlockDef | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [insertAt, setInsertAt] = useState<number | null>(null);
+  const [menuTarget, setMenuTarget] = useState<MenuTarget | null>(null);
   const [status, setStatus] = useState<SaveStatus>("idle");
 
   const sensors = useSensors(
@@ -302,17 +470,16 @@ export function PageBuilderClient({
     const handle = setTimeout(async () => {
       const result = await savePageLayout(pageId, {
         version: 1,
-        root: { id: rootId, kind: "section", children: blocks },
+        root: { id: rootId, kind: "section", children: nodes },
       });
-      if (result.ok) {
-        setStatus("saved");
-      } else {
+      if (result.ok) setStatus("saved");
+      else {
         setStatus("error");
         toast.error(result.error);
       }
     }, 600);
     return () => clearTimeout(handle);
-  }, [blocks, pageId, rootId]);
+  }, [nodes, pageId, rootId]);
 
   // Notion-style: press "/" (outside inputs) to open the block menu.
   useEffect(() => {
@@ -325,62 +492,197 @@ export function PageBuilderClient({
         (el as HTMLElement | null)?.isContentEditable;
       if (typing) return;
       e.preventDefault();
-      setInsertAt(null);
+      setMenuTarget(null);
       setMenuOpen(true);
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  function onDragEnd(event: DragEndEvent) {
+  /* --------------------------- tree mutations ---------------------------- */
+
+  const insertTop = (at: number, node: LayoutNode) =>
+    setNodes((prev) => {
+      const next = prev.slice();
+      next.splice(at, 0, node);
+      return next;
+    });
+
+  const updateTop = (id: string, fn: (n: LayoutNode) => LayoutNode) =>
+    setNodes((prev) => prev.map((n) => (n.id === id ? fn(n) : n)));
+
+  const insertChild = (groupId: string, at: number, block: BlockDef) =>
+    setNodes((prev) =>
+      prev.map((n) => {
+        if (n.id !== groupId || !isGroup(n)) return n;
+        const children = n.children.slice();
+        children.splice(at, 0, block);
+        return { ...n, children };
+      }),
+    );
+
+  const updateChild = (
+    groupId: string,
+    blockId: string,
+    fn: (b: BlockDef) => BlockDef,
+  ) =>
+    setNodes((prev) =>
+      prev.map((n) =>
+        n.id === groupId && isGroup(n)
+          ? { ...n, children: n.children.map((c) => (c.id === blockId ? fn(c) : c)) }
+          : n,
+      ),
+    );
+
+  function onTopDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
-    setBlocks((prev) => {
-      const from = prev.findIndex((b) => b.id === active.id);
-      const to = prev.findIndex((b) => b.id === over.id);
+    setNodes((prev) => {
+      const from = prev.findIndex((n) => n.id === active.id);
+      const to = prev.findIndex((n) => n.id === over.id);
+      if (from === -1 || to === -1) return prev;
       return arrayMove(prev, from, to);
     });
   }
 
-  function applyDraft(draft: Draft) {
-    setBlocks((prev) => {
-      if (editing && "block" in editing) {
-        return prev.map((b) =>
-          b.id === editing.block.id ? { ...draft, id: b.id } : b,
-        );
+  function onGroupDragEnd(groupId: string) {
+    return (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+      setNodes((prev) =>
+        prev.map((n) => {
+          if (n.id !== groupId || !isGroup(n)) return n;
+          const from = n.children.findIndex((c) => c.id === active.id);
+          const to = n.children.findIndex((c) => c.id === over.id);
+          if (from === -1 || to === -1) return n;
+          return { ...n, children: arrayMove(n.children, from, to) };
+        }),
+      );
+    };
+  }
+
+  function applyDraft(draft: BlockDraft | GroupDraft) {
+    if (!editing) return;
+    if (draft.kind === "group") {
+      if (editing.kind === "group") {
+        const id = editing.group.id;
+        updateTop(id, () => ({ ...(draft as GroupDraft), id }));
+      } else if (editing.kind === "newGroup") {
+        const g: GroupDef = { ...(draft as GroupDraft), id: crypto.randomUUID() };
+        insertTop(editing.atIndex, g);
+        setSelectedId(g.id);
       }
-      const newBlock: BlockDef = { ...draft, id: crypto.randomUUID() };
-      const at =
-        editing && "atIndex" in editing ? editing.atIndex : prev.length;
+      return;
+    }
+    const blockDraft = draft as BlockDraft;
+    if (editing.kind === "block") {
+      const id = editing.block.id;
+      if (editing.groupId) updateChild(editing.groupId, id, () => ({ ...blockDraft, id }));
+      else updateTop(id, () => ({ ...blockDraft, id }));
+    } else if (editing.kind === "newBlock") {
+      const b: BlockDef = { ...blockDraft, id: crypto.randomUUID() };
+      if (editing.groupId) insertChild(editing.groupId, editing.atIndex, b);
+      else insertTop(editing.atIndex, b);
+      setSelectedId(b.id);
+    }
+  }
+
+  function duplicateTop(node: LayoutNode) {
+    setNodes((prev) => {
+      const i = prev.findIndex((n) => n.id === node.id);
       const next = prev.slice();
-      next.splice(at, 0, newBlock);
-      setSelectedId(newBlock.id);
+      next.splice(i + 1, 0, cloneNode(node));
       return next;
     });
   }
 
-  function duplicate(block: BlockDef) {
-    setBlocks((prev) => {
-      const i = prev.findIndex((b) => b.id === block.id);
-      const copy: BlockDef = { ...structuredClone(block), id: crypto.randomUUID() };
-      const next = prev.slice();
-      next.splice(i + 1, 0, copy);
-      return next;
-    });
+  function duplicateChild(groupId: string, block: BlockDef) {
+    setNodes((prev) =>
+      prev.map((n) => {
+        if (n.id !== groupId || !isGroup(n)) return n;
+        const i = n.children.findIndex((c) => c.id === block.id);
+        const copy: BlockDef = { ...structuredClone(block), id: crypto.randomUUID() };
+        const children = n.children.slice();
+        children.splice(i + 1, 0, copy);
+        return { ...n, children };
+      }),
+    );
   }
 
   function confirmDelete() {
     if (!deleteTarget) return;
-    setBlocks((prev) => prev.filter((b) => b.id !== deleteTarget.id));
-    if (selectedId === deleteTarget.id) setSelectedId(null);
+    const { node, groupId } = deleteTarget;
+    if (groupId) {
+      setNodes((prev) =>
+        prev.map((n) =>
+          n.id === groupId && isGroup(n)
+            ? { ...n, children: n.children.filter((c) => c.id !== node.id) }
+            : n,
+        ),
+      );
+    } else {
+      setNodes((prev) => prev.filter((n) => n.id !== node.id));
+    }
+    if (selectedId === node.id) setSelectedId(null);
     setDeleteTarget(null);
   }
 
-  function pickType(type: BlockType) {
+  function pick(kind: InsertKind) {
     setMenuOpen(false);
-    setEditing({ newType: type, atIndex: insertAt ?? blocks.length });
-    setInsertAt(null);
+    const target = menuTarget ?? { groupId: null, atIndex: nodes.length };
+    if (kind === "GROUP") {
+      setEditing({ kind: "newGroup", atIndex: target.atIndex });
+    } else {
+      setEditing({
+        kind: "newBlock",
+        type: kind,
+        atIndex: target.atIndex,
+        groupId: target.groupId,
+      });
+    }
+    setMenuTarget(null);
   }
+
+  function childActions(group: GroupDef, child: BlockDef, index: number): BlockActions {
+    return {
+      selected: selectedId === child.id,
+      onSelect: () => setSelectedId(child.id),
+      onEdit: () => {
+        setSelectedId(child.id);
+        setEditing({ kind: "block", block: child, groupId: group.id });
+      },
+      onDuplicate: () => duplicateChild(group.id, child),
+      onInsertAfter: () => {
+        setMenuTarget({ groupId: group.id, atIndex: index + 1 });
+        setMenuOpen(true);
+      },
+      onDelete: () => setDeleteTarget({ node: child, groupId: group.id }),
+    };
+  }
+
+  // The editor target derived from the current `editing` state.
+  const editorTarget: EditorTarget | null = !editing
+    ? null
+    : editing.kind === "group"
+      ? { mode: "group", group: editing.group }
+      : editing.kind === "newGroup"
+        ? { mode: "group", group: null }
+        : editing.kind === "block"
+          ? { mode: "block", block: editing.block, newType: null, inGroup: !!editing.groupId }
+          : { mode: "block", block: null, newType: editing.type, inGroup: !!editing.groupId };
+
+  // The parent group's source, when editing a block inside a group.
+  const editingGroupId =
+    editing && (editing.kind === "block" || editing.kind === "newBlock")
+      ? editing.groupId
+      : null;
+  const editorGroupSource =
+    editingGroupId != null
+      ? (nodes.find((n) => n.id === editingGroupId && isGroup(n)) as GroupDef | undefined)
+          ?.source ?? null
+      : null;
+
+  const showGroupOption = (menuTarget?.groupId ?? null) === null;
 
   return (
     <div className="space-y-4">
@@ -394,7 +696,7 @@ export function PageBuilderClient({
           <Button
             size="sm"
             onClick={() => {
-              setInsertAt(null);
+              setMenuTarget(null);
               setMenuOpen(true);
             }}
           >
@@ -403,41 +705,68 @@ export function PageBuilderClient({
         </div>
       </div>
 
-      {blocks.length === 0 ? (
+      {nodes.length === 0 ? (
         <div className="rounded-lg border border-dashed p-12 text-center text-sm text-muted-foreground">
           No blocks yet. Press{" "}
           <kbd className="rounded border px-1">/</kbd> to add your first block.
         </div>
       ) : (
         <DndContext
-          id="page-block-builder"
+          id="page-node-builder"
           sensors={sensors}
           collisionDetection={closestCenter}
-          onDragEnd={onDragEnd}
+          onDragEnd={onTopDragEnd}
         >
           <SortableContext
-            items={blocks.map((b) => b.id)}
+            items={nodes.map((n) => n.id)}
             strategy={rectSortingStrategy}
           >
             <div className="grid grid-cols-1 gap-3 md:grid-cols-6">
-              {blocks.map((block, i) => (
-                <SortableBlock
-                  key={block.id}
-                  block={block}
-                  selected={selectedId === block.id}
-                  onSelect={() => setSelectedId(block.id)}
-                  onEdit={() => {
-                    setSelectedId(block.id);
-                    setEditing({ block });
-                  }}
-                  onDuplicate={() => duplicate(block)}
-                  onInsertAfter={() => {
-                    setInsertAt(i + 1);
-                    setMenuOpen(true);
-                  }}
-                  onDelete={() => setDeleteTarget(block)}
-                />
-              ))}
+              {nodes.map((node, i) =>
+                isGroup(node) ? (
+                  <GroupCard
+                    key={node.id}
+                    group={node}
+                    selected={selectedId === node.id}
+                    onSelect={() => setSelectedId(node.id)}
+                    onEdit={() => {
+                      setSelectedId(node.id);
+                      setEditing({ kind: "group", group: node });
+                    }}
+                    onDuplicate={() => duplicateTop(node)}
+                    onInsertAfter={() => {
+                      setMenuTarget({ groupId: null, atIndex: i + 1 });
+                      setMenuOpen(true);
+                    }}
+                    onDelete={() => setDeleteTarget({ node, groupId: null })}
+                    onAddChild={() => {
+                      setMenuTarget({ groupId: node.id, atIndex: node.children.length });
+                      setMenuOpen(true);
+                    }}
+                    childActions={(child, idx) => childActions(node, child, idx)}
+                    onChildDragEnd={onGroupDragEnd(node.id)}
+                    sensors={sensors}
+                  />
+                ) : (
+                  <BlockCard
+                    key={node.id}
+                    block={node}
+                    grid
+                    selected={selectedId === node.id}
+                    onSelect={() => setSelectedId(node.id)}
+                    onEdit={() => {
+                      setSelectedId(node.id);
+                      setEditing({ kind: "block", block: node, groupId: null });
+                    }}
+                    onDuplicate={() => duplicateTop(node)}
+                    onInsertAfter={() => {
+                      setMenuTarget({ groupId: null, atIndex: i + 1 });
+                      setMenuOpen(true);
+                    }}
+                    onDelete={() => setDeleteTarget({ node, groupId: null })}
+                  />
+                ),
+              )}
             </div>
           </SortableContext>
         </DndContext>
@@ -454,7 +783,7 @@ export function PageBuilderClient({
                   <CommandItem
                     key={b.type}
                     value={`${b.label} ${b.description}`}
-                    onSelect={() => pickType(b.type)}
+                    onSelect={() => pick(b.type)}
                   >
                     <DynamicIcon name={b.icon} className="size-4" />
                     <div className="flex flex-col">
@@ -467,6 +796,22 @@ export function PageBuilderClient({
                 ))}
               </CommandGroup>
             ))}
+            {showGroupOption && (
+              <CommandGroup heading="Layout">
+                <CommandItem
+                  value={`${GROUP_META.label} ${GROUP_META.description}`}
+                  onSelect={() => pick("GROUP")}
+                >
+                  <DynamicIcon name={GROUP_META.icon} className="size-4" />
+                  <div className="flex flex-col">
+                    <span>{GROUP_META.label}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {GROUP_META.description}
+                    </span>
+                  </div>
+                </CommandItem>
+              </CommandGroup>
+            )}
           </CommandList>
         </Command>
       </CommandDialog>
@@ -474,10 +819,10 @@ export function PageBuilderClient({
       <BlockEditorSheet
         open={editing !== null}
         onOpenChange={(open) => !open && setEditing(null)}
-        block={editing && "block" in editing ? editing.block : null}
-        newType={editing && "newType" in editing ? editing.newType : null}
+        target={editorTarget}
         connections={connections}
         resources={resources}
+        groupSource={editorGroupSource}
         onSave={applyDraft}
       />
 
@@ -487,10 +832,13 @@ export function PageBuilderClient({
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete this block?</AlertDialogTitle>
+            <AlertDialogTitle>
+              Delete this {deleteTarget && isGroup(deleteTarget.node) ? "group" : "block"}?
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              It will be removed from the page. The external API data is not
-              touched.
+              {deleteTarget && isGroup(deleteTarget.node)
+                ? "The group and the blocks inside it will be removed. The external API data is not touched."
+                : "It will be removed from the page. The external API data is not touched."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

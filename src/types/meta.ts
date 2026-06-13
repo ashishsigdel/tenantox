@@ -209,8 +209,11 @@ export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
  * How a block gets its data.
  *  - resource: reuse an existing Resource (Table block → full CRUD engine).
  *  - raw: hit an ApiConnection endpoint directly (chart / stat / button).
- * For `raw`, the request is built server-side from this stored config; the
- * browser only ever references the block by id.
+ *  - group: read a slice of the enclosing Group block's single response;
+ *    the block only stores a `rootPath` into that already-fetched data.
+ * For `raw` the request is built server-side; the browser only ever references
+ * the block by id. A `group` block never fetches itself — it reads the group's
+ * data from context.
  */
 export type BlockDataSource =
   | { mode: "resource"; resourceId: string }
@@ -224,6 +227,11 @@ export type BlockDataSource =
       rootPath?: string;
       /** Static query params merged into the request. */
       query?: Record<string, string>;
+    }
+  | {
+      mode: "group";
+      /** Which part of the enclosing group's response this block uses, e.g. "data.users". */
+      rootPath?: string;
     };
 
 export type StatAggregate = "raw" | "count" | "sum" | "avg" | "min" | "max";
@@ -286,8 +294,16 @@ export interface CalloutConfig {
   icon?: string;
 }
 
+export interface TableColumn {
+  key: string;
+  label: string;
+}
+
 export interface TableBlockConfig {
   title?: string;
+  /** Optional explicit columns for a read-only table inside a group; when
+   * omitted the columns are auto-derived from the first row's keys. */
+  columns?: TableColumn[];
 }
 
 /** Union of every block's config shape; narrowed by BlockDef["type"]. */
@@ -308,6 +324,8 @@ export type BlockConfig =
  */
 export interface BlockDef {
   id: string;
+  /** Discriminates a leaf block from a Group container in the layout tree. */
+  kind?: "block";
   type: BlockType;
   width: BlockWidth;
   config: BlockConfig;
@@ -316,14 +334,54 @@ export interface BlockDef {
   visibleToRoles: Role[] | null;
 }
 
+/** The single shared upstream call a Group block performs for its children. */
+export interface GroupSource {
+  connectionId: string;
+  method: HttpMethod;
+  /** Path relative to the connection baseUrl. Supports `{{var}}` interpolation. */
+  path: string;
+  /** Static query params merged into the request. */
+  query?: Record<string, string>;
+}
+
+export interface GroupConfig {
+  title?: string;
+  /** Number of columns the group lays its children out in (1–6). Defaults to 2. */
+  columns?: 1 | 2 | 3 | 4 | 6;
+}
+
 /**
- * A layout container. Phase 1 uses a single implicit root section holding a flat
- * list of blocks; nesting/columns arrive in Phase 2 (children → LayoutNode[]).
+ * A Group container: makes one API call (`source`) and hands slices of the
+ * response to its child blocks, which each pick a `rootPath` via a `group`
+ * data source. A simple wrapper — no nesting of groups.
+ */
+export interface GroupDef {
+  id: string;
+  kind: "group";
+  width: BlockWidth;
+  config: GroupConfig;
+  source: GroupSource | null;
+  children: BlockDef[];
+  /** Roles allowed to see this group; null = inherit the page's viewRole. */
+  visibleToRoles: Role[] | null;
+}
+
+/** A top-level node in the layout tree: a leaf block or a group container. */
+export type LayoutNode = BlockDef | GroupDef;
+
+/** Narrows a layout node to a GroupDef. */
+export function isGroup(node: LayoutNode): node is GroupDef {
+  return node.kind === "group";
+}
+
+/**
+ * A layout container. The root section holds a flat list of nodes (blocks and
+ * groups); groups themselves hold a flat list of child blocks.
  */
 export interface SectionDef {
   id: string;
   kind: "section";
-  children: BlockDef[];
+  children: LayoutNode[];
 }
 
 /** The whole page layout, stored as JSON on Page.layout. */

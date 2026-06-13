@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { FlaskConical, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { JsonHighlight } from "@/components/ui/json-highlight";
 import { toast } from "sonner";
 
 import {
@@ -47,6 +48,7 @@ import {
   saveConnection,
   testConnection,
   type ConnectionInput,
+  type TestConnectionResult,
 } from "@/server/actions/connections";
 import type { AuthType } from "@prisma/client";
 
@@ -83,9 +85,11 @@ export function ConnectionsClient({
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [testPath, setTestPath] = useState("/products");
   const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<TestConnectionResult | null>(null);
 
   function openCreate() {
     setDraft(EMPTY);
+    setTestResult(null);
     setDialogOpen(true);
   }
 
@@ -96,6 +100,7 @@ export function ConnectionsClient({
       baseUrl: row.baseUrl,
       authType: row.authType,
     });
+    setTestResult(null);
     setDialogOpen(true);
   }
 
@@ -125,10 +130,19 @@ export function ConnectionsClient({
       return;
     }
     setTesting(true);
-    const result = await testConnection({ baseUrl: draft.baseUrl, testPath });
+    setTestResult(null);
+    const result = await testConnection({
+      baseUrl: draft.baseUrl,
+      testPath,
+      authType: draft.authType,
+      token: draft.token,
+      headerName: draft.headerName,
+      apiKey: draft.apiKey,
+      username: draft.username,
+      password: draft.password,
+    });
     setTesting(false);
-    if (result.ok) toast.success(result.message);
-    else toast.error(result.message);
+    setTestResult(result);
   }
 
   function confirmDelete() {
@@ -159,7 +173,7 @@ export function ConnectionsClient({
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
-              <TableHead>Base URL</TableHead>
+              <TableHead className="max-w-[200px]">Base URL</TableHead>
               <TableHead>Auth</TableHead>
               <TableHead>Resources</TableHead>
               <TableHead className="w-24" />
@@ -179,8 +193,13 @@ export function ConnectionsClient({
             {connections.map((row) => (
               <TableRow key={row.id}>
                 <TableCell className="font-medium">{row.name}</TableCell>
-                <TableCell className="font-mono text-xs">
-                  {row.baseUrl}
+                <TableCell className="max-w-[200px]">
+                  <span
+                    className="block truncate font-mono text-xs"
+                    title={row.baseUrl}
+                  >
+                    {row.baseUrl}
+                  </span>
                 </TableCell>
                 <TableCell>
                   <Badge variant="secondary">{AUTH_LABELS[row.authType]}</Badge>
@@ -213,8 +232,8 @@ export function ConnectionsClient({
       </div>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[90vh] flex-col sm:max-w-xl">
+          <DialogHeader className="shrink-0">
             <DialogTitle>
               {draft.id ? "Edit connection" : "New connection"}
             </DialogTitle>
@@ -224,6 +243,7 @@ export function ConnectionsClient({
             </DialogDescription>
           </DialogHeader>
 
+          <div className="min-h-0 flex-1 overflow-y-auto pr-1">
           <div className="space-y-4">
             <div className="space-y-2">
               <Label>Name</Label>
@@ -339,10 +359,41 @@ export function ConnectionsClient({
                   Test
                 </Button>
               </div>
+
+              {testResult && (
+                <div className="mt-2 space-y-2">
+                  <div className="flex flex-wrap items-start gap-2">
+                    <span
+                      className={`inline-flex shrink-0 items-center rounded px-2 py-0.5 text-xs font-semibold ${
+                        testResult.status !== undefined
+                          ? testResult.status >= 200 && testResult.status < 300
+                            ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400"
+                            : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400"
+                          : testResult.ok
+                            ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400"
+                            : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400"
+                      }`}
+                    >
+                      {testResult.status !== undefined
+                        ? `HTTP ${testResult.status}`
+                        : testResult.ok
+                          ? "OK"
+                          : "Error"}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {testResult.message}
+                    </span>
+                  </div>
+                  {testResult.body !== undefined && (
+                    <JsonHighlight value={testResult.body} />
+                  )}
+                </div>
+              )}
             </div>
           </div>
+          </div>
 
-          <DialogFooter>
+          <DialogFooter className="shrink-0">
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               Cancel
             </Button>

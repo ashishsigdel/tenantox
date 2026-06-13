@@ -15,10 +15,10 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "Admin Dashboard",
-    template: "%s | Admin Dashboard",
+    default: "Tenantox",
+    template: "%s | Tenantox",
   },
-  description: "Dynamic schema-driven admin dashboard",
+  description: "Multi-tenant SaaS platform for managing workspaces and resources",
 };
 
 export default function RootLayout({

@@ -7,6 +7,8 @@ import { useBlockData } from "@/lib/data-provider";
 import { getArray, getPath, toNumber } from "@/lib/json-path";
 import type { BlockDef, CellFormat, StatConfig, StatMetric } from "@/types/meta";
 
+import { useGroupData } from "./group-block";
+
 /** Formats an aggregated stat value for display. */
 function formatValue(value: unknown, format: CellFormat): string {
   if (value === null || value === undefined || value === "") return "—";
@@ -34,7 +36,8 @@ function aggregate(
   metric: StatMetric,
 ): unknown {
   if (metric.aggregate === "raw") {
-    return getPath(data, metric.valuePath);
+    const root = rootPath ? getPath(data, rootPath) : data;
+    return getPath(root, metric.valuePath);
   }
   const rows = getArray(data, rootPath);
   const values = rows
@@ -65,9 +68,15 @@ const COLS_CLASS: Record<1 | 2 | 3 | 4, string> = {
 
 export function StatBlock({ pageId, block }: { pageId: string; block: BlockDef }) {
   const config = (block.config as StatConfig | null) ?? { metrics: [] };
+  const ds = block.dataSource;
   const rootPath =
-    block.dataSource?.mode === "raw" ? block.dataSource.rootPath : undefined;
-  const { data, isLoading, isError, error } = useBlockData(pageId, block.id);
+    ds?.mode === "raw" || ds?.mode === "group" ? ds.rootPath : undefined;
+  // Inside a group, read the group's single fetch from context; otherwise the
+  // block fetches its own raw source.
+  const group = useGroupData();
+  const inGroup = ds?.mode === "group" && group !== null;
+  const own = useBlockData(pageId, block.id, undefined, !inGroup && ds?.mode === "raw");
+  const { data, isLoading, isError, error } = inGroup ? group : own;
 
   if (isError) {
     return (

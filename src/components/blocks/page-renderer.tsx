@@ -2,20 +2,22 @@ import { prisma } from "@/lib/prisma";
 import { toResourceDef } from "@/lib/resources";
 import { hasRole } from "@/lib/roles";
 import { cn } from "@/lib/utils";
-import type { BlockDef, PageDef, ResourceDef } from "@/types/meta";
+import { isGroup } from "@/types/meta";
+import type { BlockWidth, LayoutNode, PageDef, ResourceDef } from "@/types/meta";
 import type { Role } from "@prisma/client";
 
 import { BlockRenderer } from "./block-renderer";
+import { GroupBlock } from "./group-block";
 
-const WIDTH_CLASS: Record<BlockDef["width"], string> = {
+const WIDTH_CLASS: Record<BlockWidth, string> = {
   full: "md:col-span-6",
   half: "md:col-span-3",
   third: "md:col-span-2",
 };
 
-function canSee(block: BlockDef, page: PageDef, role: Role): boolean {
-  if (block.visibleToRoles && block.visibleToRoles.length > 0) {
-    return block.visibleToRoles.includes(role);
+function canSee(node: LayoutNode, page: PageDef, role: Role): boolean {
+  if (node.visibleToRoles && node.visibleToRoles.length > 0) {
+    return node.visibleToRoles.includes(role);
   }
   return hasRole(role, page.viewRole);
 }
@@ -31,12 +33,18 @@ export async function PageRenderer({
   page: PageDef;
   role: Role;
 }) {
-  const visible = page.layout.root.children.filter((b) => canSee(b, page, role));
+  const visible = page.layout.root.children.filter((n) => canSee(n, page, role));
 
-  // Preload the ResourceDef for every Table block.
+  // Preload the ResourceDef for every top-level resource-backed Table block.
+  // Tables inside a group are read-only (no resource), so they're skipped.
   const resourceIds = visible
-    .filter((b) => b.type === "TABLE" && b.dataSource?.mode === "resource")
-    .map((b) => (b.dataSource as { resourceId: string }).resourceId);
+    .filter(
+      (n) =>
+        !isGroup(n) &&
+        n.type === "TABLE" &&
+        n.dataSource?.mode === "resource",
+    )
+    .map((n) => (n.dataSource as { resourceId: string }).resourceId);
 
   const resources = resourceIds.length
     ? await prisma.resource.findMany({
@@ -58,22 +66,24 @@ export async function PageRenderer({
 
   return (
     <div className="grid grid-cols-1 gap-4 md:grid-cols-6">
-      {visible.map((block) => {
-        const resource =
-          block.type === "TABLE" && block.dataSource?.mode === "resource"
-            ? resourceById.get(block.dataSource.resourceId) ?? null
-            : null;
-        return (
-          <div key={block.id} className={cn("min-w-0", WIDTH_CLASS[block.width])}>
+      {visible.map((node) => (
+        <div key={node.id} className={cn("min-w-0", WIDTH_CLASS[node.width])}>
+          {isGroup(node) ? (
+            <GroupBlock pageId={page.id} group={node} role={role} />
+          ) : (
             <BlockRenderer
               pageId={page.id}
-              block={block}
+              block={node}
               role={role}
-              resource={resource}
+              resource={
+                node.type === "TABLE" && node.dataSource?.mode === "resource"
+                  ? resourceById.get(node.dataSource.resourceId) ?? null
+                  : null
+              }
             />
-          </div>
-        );
-      })}
+          )}
+        </div>
+      ))}
     </div>
   );
 }

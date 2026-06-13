@@ -24,6 +24,8 @@ import { useBlockData } from "@/lib/data-provider";
 import { getArray, getPath, toNumber } from "@/lib/json-path";
 import type { BlockDef, ChartConfig } from "@/types/meta";
 
+import { useGroupData } from "./group-block";
+
 const PALETTE = [
   "#6366f1",
   "#10b981",
@@ -35,9 +37,15 @@ const PALETTE = [
 
 export function ChartBlock({ pageId, block }: { pageId: string; block: BlockDef }) {
   const config = block.config as ChartConfig | null;
+  const ds = block.dataSource;
   const rootPath =
-    block.dataSource?.mode === "raw" ? block.dataSource.rootPath : undefined;
-  const { data, isLoading, isError, error } = useBlockData(pageId, block.id);
+    ds?.mode === "raw" || ds?.mode === "group" ? ds.rootPath : undefined;
+  // Inside a group, read the group's single fetch from context; otherwise the
+  // block fetches its own raw source.
+  const group = useGroupData();
+  const inGroup = ds?.mode === "group" && group !== null;
+  const own = useBlockData(pageId, block.id, undefined, !inGroup && ds?.mode === "raw");
+  const { data, isLoading, isError, error } = inGroup ? group : own;
 
   if (!config || !config.series?.length) {
     return (

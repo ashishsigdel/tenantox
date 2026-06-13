@@ -10,8 +10,9 @@ import { z } from "zod";
 import { auth } from "@/auth";
 import { fetchRawSource, type RawSource } from "@/lib/block-fetch";
 import { prisma } from "@/lib/prisma";
-import { findBlock, toPageLayout } from "@/lib/pages";
+import { findNode, toPageLayout } from "@/lib/pages";
 import { hasRole } from "@/lib/roles";
+import { isGroup } from "@/types/meta";
 import type { BlockDataSource } from "@/types/meta";
 
 const bodySchema = z.object({
@@ -37,40 +38,56 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) return fail("Invalid request", 422);
   const { pageId, nodeId, vars, payload } = parsed.data;
 
-  // Load the page (scoped to the caller's workspace) and find the block leaf.
+  // Load the page (scoped to the caller's workspace).
   const page = await prisma.page.findFirst({
     where: { id: pageId, workspaceId },
     select: { layout: true, viewRole: true },
   });
   if (!page) return fail("Unknown page", 404);
 
-  const block = findBlock(toPageLayout(page.layout), nodeId);
-  if (!block) return fail("Unknown block", 404);
+  const layout = toPageLayout(page.layout);
 
-  const allowed = block.visibleToRoles;
-  const meetsBlock =
+  // nodeId may be a leaf block id or a Group container id.
+  const node = findNode(layout, nodeId);
+  if (!node) return fail("Unknown block", 404);
+
+  // Enforce the node's visibility rules.
+  const allowed = node.visibleToRoles;
+  const meets =
     allowed && allowed.length > 0
       ? allowed.includes(role)
       : hasRole(role, page.viewRole);
-  if (!meetsBlock) return fail("You don't have access to this block", 403);
+  if (!meets) return fail("You don't have access to this block", 403);
 
-  const source = block.dataSource as BlockDataSource | null;
-  if (!source || source.mode !== "raw") {
-    return fail("This block has no raw data source", 422);
+  let connectionId: string;
+  let rawSource: RawSource;
+
+  if (isGroup(node)) {
+    // Group: one shared upstream call for all its children.
+    if (!node.source) return fail("This group has no data source", 422);
+    connectionId = node.source.connectionId;
+    rawSource = {
+      method: node.source.method,
+      path: node.source.path,
+      query: node.source.query,
+    };
+  } else {
+    const source = node.dataSource as BlockDataSource | null;
+    if (!source || source.mode !== "raw") {
+      // `group`-mode children read the group's data from context, never here.
+      return fail("This block has no raw data source", 422);
+    }
+    connectionId = source.connectionId;
+    rawSource = source as RawSource;
   }
 
   const connection = await prisma.apiConnection.findFirst({
-    where: { id: source.connectionId, workspaceId },
+    where: { id: connectionId, workspaceId },
   });
   if (!connection) return fail("Connection not found", 404);
 
   try {
-    const { status, json } = await fetchRawSource(
-      connection,
-      source as RawSource & { connectionId: string },
-      vars,
-      payload,
-    );
+    const { status, json } = await fetchRawSource(connection, rawSource, vars, payload);
     return NextResponse.json({ success: true, status, data: json });
   } catch {
     return fail("Could not reach the external API", 502);

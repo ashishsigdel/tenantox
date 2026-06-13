@@ -121,6 +121,41 @@ export async function deleteConnection(id: string): Promise<ActionResult> {
   });
 }
 
+export type TestConnectionResult = {
+  ok: boolean;
+  message: string;
+  status?: number;
+  body?: unknown;
+};
+
+function buildTestAuthHeaders(input: {
+  authType: string;
+  token?: string;
+  headerName?: string;
+  apiKey?: string;
+  username?: string;
+  password?: string;
+}): Record<string, string> {
+  switch (input.authType) {
+    case "BEARER_TOKEN":
+      return input.token ? { Authorization: `Bearer ${input.token}` } : {};
+    case "API_KEY_HEADER":
+      return input.headerName && input.apiKey
+        ? { [input.headerName]: input.apiKey }
+        : {};
+    case "BASIC":
+      return input.username
+        ? {
+            Authorization: `Basic ${Buffer.from(
+              `${input.username}:${input.password ?? ""}`,
+            ).toString("base64")}`,
+          }
+        : {};
+    default:
+      return {};
+  }
+}
+
 /**
  * Pings a list-style endpoint on the connection and verifies the response
  * follows the API contract envelope.
@@ -128,12 +163,19 @@ export async function deleteConnection(id: string): Promise<ActionResult> {
 export async function testConnection(input: {
   baseUrl: string;
   testPath: string;
-}): Promise<{ ok: boolean; message: string }> {
+  authType?: string;
+  token?: string;
+  headerName?: string;
+  apiKey?: string;
+  username?: string;
+  password?: string;
+}): Promise<TestConnectionResult> {
   try {
     await requireWorkspaceRole("ADMIN");
+    const authHeaders = buildTestAuthHeaders({ ...input, authType: input.authType ?? "NONE" });
     const url = `${input.baseUrl.replace(/\/$/, "")}${input.testPath.startsWith("/") ? input.testPath : `/${input.testPath}`}`;
     const res = await fetch(`${url}?page=1&pageSize=1`, {
-      headers: { Accept: "application/json" },
+      headers: { Accept: "application/json", ...authHeaders },
       cache: "no-store",
       signal: AbortSignal.timeout(8000),
     });
@@ -143,17 +185,23 @@ export async function testConnection(input: {
         ok: false,
         message:
           "Endpoint responded, but without the { success, data } envelope required by the contract.",
+        status: res.status,
+        body,
       };
     }
     if (body.success && !Array.isArray(body.data)) {
       return {
         ok: false,
         message: "Envelope OK, but `data` is not an array for a list endpoint.",
+        status: res.status,
+        body,
       };
     }
     return {
       ok: true,
       message: `Contract OK (HTTP ${res.status}${body.meta ? `, total: ${body.meta.total}` : ""})`,
+      status: res.status,
+      body,
     };
   } catch (e) {
     return {

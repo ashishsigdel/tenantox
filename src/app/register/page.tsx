@@ -18,7 +18,7 @@ export default function RegisterPage() {
             <LayoutDashboard className="size-4" />
           </div>
           <span className="text-sm font-semibold tracking-tight">
-            Admin Dashboard
+            Tenantox
           </span>
         </div>
 

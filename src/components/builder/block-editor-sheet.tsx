@@ -5,6 +5,7 @@ import { Loader2, Plus, Play, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { JsonHighlight } from "@/components/ui/json-highlight";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -30,97 +31,163 @@ import type {
   BlockDef,
   BlockWidth,
   ChartConfig,
+  GroupConfig,
+  GroupDef,
+  GroupSource,
   HttpMethod,
   StatConfig,
 } from "@/types/meta";
 import type { BlockType, Role } from "@prisma/client";
 
-import { blockTypeMeta, defaultBlockDraft } from "./block-types";
+import { blockTypeMeta, defaultBlockDraft, defaultGroupDraft } from "./block-types";
 import { TableSourceEditor } from "./table-source-editor";
 
 type Connection = { id: string; name: string };
 type ResourceOption = { id: string; name: string; slug: string };
 
-type Draft = Omit<BlockDef, "id" | "order">;
+type BlockDraft = Omit<BlockDef, "id">;
+type GroupDraft = Omit<GroupDef, "id">;
+
+/** What the sheet is currently editing. */
+export type EditorTarget =
+  | { mode: "block"; block: BlockDef | null; newType: BlockType | null; inGroup: boolean }
+  | { mode: "group"; group: GroupDef | null };
 
 const METHODS: HttpMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 
 export function BlockEditorSheet({
   open,
   onOpenChange,
-  block,
-  newType,
+  target,
   connections,
   resources,
+  groupSource,
   onSave,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  block: BlockDef | null;
-  newType: BlockType | null;
+  target: EditorTarget | null;
   connections: Connection[];
   resources: ResourceOption[];
-  /** Receives the edited draft (without id); the parent owns the layout tree. */
-  onSave: (draft: Draft) => void;
+  /** When editing a block inside a group, that group's source — for the test
+   * preview so the author can find the right section path. */
+  groupSource: GroupSource | null;
+  /** Receives the edited node draft (block or group); the parent owns the tree. */
+  onSave: (draft: BlockDraft | GroupDraft) => void;
 }) {
-  const [draft, setDraft] = useState<Draft>(defaultBlockDraft("TEXT"));
+  const [blockDraft, setBlockDraft] = useState<BlockDraft>(() =>
+    defaultBlockDraft("TEXT"),
+  );
+  const [groupDraft, setGroupDraft] = useState<GroupDraft>(() =>
+    defaultGroupDraft(),
+  );
   const preview = usePreviewSource();
   const [previewText, setPreviewText] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    setPreviewText(null);
-    if (block) {
-      setDraft({
-        type: block.type,
-        width: block.width,
-        config: block.config,
-        dataSource: block.dataSource,
-        visibleToRoles: block.visibleToRoles,
-      });
-    } else if (newType) {
-      setDraft(defaultBlockDraft(newType));
-    }
-  }, [open, block, newType]);
+  const isGroup = target?.mode === "group";
+  const inGroup = target?.mode === "block" ? target.inGroup : false;
 
-  const type = draft.type;
+  useEffect(() => {
+    if (!open || !target) return;
+    setPreviewText(null);
+    if (target.mode === "group") {
+      setGroupDraft(
+        target.group
+          ? {
+              kind: "group",
+              width: target.group.width,
+              config: target.group.config,
+              source: target.group.source,
+              children: target.group.children,
+              visibleToRoles: target.group.visibleToRoles,
+            }
+          : defaultGroupDraft(),
+      );
+    } else if (target.block) {
+      setBlockDraft({
+        kind: "block",
+        type: target.block.type,
+        width: target.block.width,
+        config: target.block.config,
+        dataSource: target.block.dataSource,
+        visibleToRoles: target.block.visibleToRoles,
+      });
+    } else if (target.newType) {
+      setBlockDraft(defaultBlockDraft(target.newType, target.inGroup));
+    }
+  }, [open, target]);
+
+  /* ------------------------------- group edit ------------------------------ */
+
+  function setGroupConfig(patch: Partial<GroupConfig>) {
+    setGroupDraft((d) => ({ ...d, config: { ...d.config, ...patch } }));
+  }
+  function setGroupSrc(patch: Partial<GroupSource>) {
+    setGroupDraft((d) => ({
+      ...d,
+      source: { ...(d.source ?? { connectionId: "", method: "GET", path: "" }), ...patch },
+    }));
+  }
+
+  /* ------------------------------- block edit ------------------------------ */
+
+  const type = blockDraft.type;
   const meta = blockTypeMeta(type);
-  const isRaw = meta.raw;
-  const config = (draft.config ?? {}) as Record<string, unknown>;
+  const config = (blockDraft.config ?? {}) as Record<string, unknown>;
+  const ds = blockDraft.dataSource;
+
+  const showResourcePicker = type === "TABLE" && !inGroup;
+  const isGroupChildData =
+    inGroup && (type === "CHART" || type === "STAT" || type === "TABLE");
+  // Standalone CHART/STAT/BUTTON, plus BUTTON inside a group, use a raw endpoint.
+  const showRawEditor = !showResourcePicker && !isGroupChildData && meta.raw;
+
   const raw =
-    draft.dataSource?.mode === "raw"
-      ? (draft.dataSource as Extract<BlockDataSource, { mode: "raw" }>)
+    ds?.mode === "raw"
+      ? (ds as Extract<BlockDataSource, { mode: "raw" }>)
       : null;
+  const groupRoot = ds?.mode === "group" ? ds.rootPath ?? "" : "";
 
   function setConfig(patch: Record<string, unknown>) {
-    setDraft((d) => ({ ...d, config: { ...(d.config ?? {}), ...patch } }));
+    setBlockDraft((d) => ({ ...d, config: { ...(d.config ?? {}), ...patch } }));
   }
   function setRaw(patch: Partial<Extract<BlockDataSource, { mode: "raw" }>>) {
-    setDraft((d) => ({
+    setBlockDraft((d) => ({
       ...d,
-      dataSource: { ...(d.dataSource as object), ...patch } as BlockDataSource,
+      dataSource: { ...(d.dataSource as object), mode: "raw", ...patch } as BlockDataSource,
+    }));
+  }
+  function setGroupRoot(rootPath: string) {
+    setBlockDraft((d) => ({
+      ...d,
+      dataSource: { mode: "group", rootPath } as BlockDataSource,
     }));
   }
 
   function toggleRole(role: Role) {
-    setDraft((d) => {
-      const current = d.visibleToRoles ?? [];
-      const next = current.includes(role)
-        ? current.filter((r) => r !== role)
-        : [...current, role];
-      return { ...d, visibleToRoles: next.length ? next : null };
-    });
+    if (isGroup) {
+      setGroupDraft((d) => ({ ...d, visibleToRoles: nextRoles(d.visibleToRoles, role) }));
+    } else {
+      setBlockDraft((d) => ({ ...d, visibleToRoles: nextRoles(d.visibleToRoles, role) }));
+    }
   }
 
   function runPreview() {
-    if (!raw) return;
+    // Group child blocks preview the parent group's endpoint; everything else
+    // previews its own raw source.
+    const src = isGroupChildData
+      ? groupSource
+      : raw
+        ? { connectionId: raw.connectionId, method: raw.method, path: raw.path, query: raw.query }
+        : isGroup && groupDraft.source
+          ? groupDraft.source
+          : null;
+    if (!src || !src.connectionId || !src.path) {
+      toast.error("Set a connection and path first");
+      return;
+    }
     preview.mutate(
-      {
-        connectionId: raw.connectionId,
-        method: raw.method,
-        path: raw.path,
-        query: raw.query,
-      },
+      { connectionId: src.connectionId, method: src.method, path: src.path, query: src.query },
       {
         onSuccess: (data) =>
           setPreviewText(JSON.stringify(data, null, 2).slice(0, 4000)),
@@ -130,266 +197,407 @@ export function BlockEditorSheet({
   }
 
   function submit() {
-    onSave({
-      type,
-      width: draft.width,
-      config: draft.config,
-      dataSource: draft.dataSource ?? null,
-      visibleToRoles: draft.visibleToRoles,
-    });
+    if (isGroup) {
+      onSave(groupDraft);
+    } else {
+      onSave({
+        kind: "block",
+        type,
+        width: blockDraft.width,
+        config: blockDraft.config,
+        dataSource: blockDraft.dataSource ?? null,
+        visibleToRoles: blockDraft.visibleToRoles,
+      });
+    }
     onOpenChange(false);
   }
+
+  const editingExisting =
+    target?.mode === "group" ? !!target.group : !!target?.block;
+  const titleLabel = isGroup ? "Group" : meta.label;
+  const visibleToRoles = isGroup ? groupDraft.visibleToRoles : blockDraft.visibleToRoles;
+  const width = isGroup ? groupDraft.width : blockDraft.width;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
         <SheetHeader>
           <SheetTitle>
-            {block ? "Edit" : "Add"} {meta.label}
+            {editingExisting ? "Edit" : "Add"} {titleLabel}
           </SheetTitle>
-          <SheetDescription>{meta.description}</SheetDescription>
+          <SheetDescription>
+            {isGroup ? "One API call shared by the blocks inside." : meta.description}
+          </SheetDescription>
         </SheetHeader>
 
         <div className="space-y-5 px-4">
-          {/* Type-specific config */}
-          {type === "TABLE" && (
-            <TableSourceEditor
-              value={
-                draft.dataSource?.mode === "resource"
-                  ? draft.dataSource.resourceId
-                  : ""
-              }
-              onChange={(resourceId) =>
-                setDraft((d) => ({
-                  ...d,
-                  dataSource: { mode: "resource", resourceId },
-                }))
-              }
-              connections={connections}
-              resources={resources}
-            />
-          )}
-
-          {type === "HEADING" && (
+          {/* ───────────────────────── group editor ───────────────────────── */}
+          {isGroup && (
             <>
-              <Field label="Text">
+              <Field label="Title (optional)">
                 <Input
-                  value={(config.text as string) ?? ""}
-                  onChange={(e) => setConfig({ text: e.target.value })}
+                  value={groupDraft.config.title ?? ""}
+                  onChange={(e) => setGroupConfig({ title: e.target.value })}
                 />
               </Field>
-              <Field label="Level">
+              <Field label="Columns">
                 <Select
-                  value={String(config.level ?? 2)}
-                  onValueChange={(v) => setConfig({ level: Number(v) })}
+                  value={String(groupDraft.config.columns ?? 2)}
+                  onValueChange={(v) =>
+                    setGroupConfig({ columns: Number(v) as GroupConfig["columns"] })
+                  }
                 >
-                  <SelectTrigger className="w-32">
+                  <SelectTrigger className="w-24">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="1">H1</SelectItem>
-                    <SelectItem value="2">H2</SelectItem>
-                    <SelectItem value="3">H3</SelectItem>
-                  </SelectContent>
-                </Select>
-              </Field>
-            </>
-          )}
-
-          {type === "TEXT" && (
-            <Field label="Markdown">
-              <Textarea
-                value={(config.markdown as string) ?? ""}
-                onChange={(e) => setConfig({ markdown: e.target.value })}
-                rows={6}
-                placeholder={"## Heading\n\nSome **bold** text and a\n- bullet\n- list"}
-              />
-            </Field>
-          )}
-
-          {type === "CALLOUT" && (
-            <>
-              <Field label="Text">
-                <Textarea
-                  value={(config.text as string) ?? ""}
-                  onChange={(e) => setConfig({ text: e.target.value })}
-                  rows={3}
-                />
-              </Field>
-              <Field label="Tone">
-                <Select
-                  value={(config.tone as string) ?? "info"}
-                  onValueChange={(v) => setConfig({ tone: v })}
-                >
-                  <SelectTrigger className="w-40">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {["info", "success", "warning", "danger"].map((t) => (
-                      <SelectItem key={t} value={t}>
-                        {t}
+                    {[1, 2, 3, 4, 6].map((c) => (
+                      <SelectItem key={c} value={String(c)}>
+                        {c}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </Field>
-              <Field label="Icon (lucide, optional)">
-                <Input
-                  value={(config.icon as string) ?? ""}
-                  onChange={(e) => setConfig({ icon: e.target.value })}
-                  placeholder="info"
-                />
-              </Field>
-            </>
-          )}
-
-          {/* Raw data source (chart / stat / button) */}
-          {isRaw && raw && (
-            <div className="space-y-3 rounded-lg border p-3">
-              <p className="text-sm font-medium">Data source</p>
-              <Field label="Connection">
-                <Select
-                  value={raw.connectionId}
-                  onValueChange={(v) => setRaw({ connectionId: v })}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Pick a connection" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {connections.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {c.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-              <div className="flex gap-2">
-                <Select
-                  value={raw.method}
-                  onValueChange={(v) => setRaw({ method: v as HttpMethod })}
-                >
-                  <SelectTrigger size="sm" className="w-28">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {METHODS.map((m) => (
-                      <SelectItem key={m} value={m}>
-                        {m}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Input
-                  className="h-8 font-mono text-xs"
-                  value={raw.path}
-                  onChange={(e) => setRaw({ path: e.target.value })}
-                  placeholder="/analytics/revenue"
-                />
-              </div>
-              {type !== "BUTTON" && (
-                <Field label="Root path (to the array/object)">
+              <div className="space-y-3 rounded-lg border p-3">
+                <p className="text-sm font-medium">Shared data source</p>
+                <Field label="Connection">
+                  <Select
+                    value={groupDraft.source?.connectionId ?? ""}
+                    onValueChange={(v) => setGroupSrc({ connectionId: v })}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Pick a connection" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {connections.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <div className="flex gap-2">
+                  <Select
+                    value={groupDraft.source?.method ?? "GET"}
+                    onValueChange={(v) => setGroupSrc({ method: v as HttpMethod })}
+                  >
+                    <SelectTrigger size="sm" className="w-28">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {METHODS.map((m) => (
+                        <SelectItem key={m} value={m}>
+                          {m}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <Input
-                    className="font-mono text-xs"
-                    value={raw.rootPath ?? ""}
-                    onChange={(e) => setRaw({ rootPath: e.target.value })}
-                    placeholder="data.items"
+                    className="h-8 font-mono text-xs"
+                    value={groupDraft.source?.path ?? ""}
+                    onChange={(e) => setGroupSrc({ path: e.target.value })}
+                    placeholder="/dashboard"
+                  />
+                </div>
+                <QueryParamsEditor
+                  query={groupDraft.source?.query ?? {}}
+                  onChange={(query) => setGroupSrc({ query })}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={runPreview}
+                  disabled={
+                    preview.isPending ||
+                    !groupDraft.source?.connectionId ||
+                    !groupDraft.source?.path
+                  }
+                >
+                  {preview.isPending ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Play className="size-4" />
+                  )}
+                  Test
+                </Button>
+                {previewText !== null && <JsonHighlight raw={previewText} />}
+              </div>
+            </>
+          )}
+
+          {/* ───────────────────────── block editor ───────────────────────── */}
+          {!isGroup && (
+            <>
+              {showResourcePicker && (
+                <TableSourceEditor
+                  value={ds?.mode === "resource" ? ds.resourceId : ""}
+                  onChange={(resourceId) =>
+                    setBlockDraft((d) => ({
+                      ...d,
+                      dataSource: { mode: "resource", resourceId },
+                    }))
+                  }
+                  connections={connections}
+                  resources={resources}
+                />
+              )}
+
+              {type === "HEADING" && (
+                <>
+                  <Field label="Text">
+                    <Input
+                      value={(config.text as string) ?? ""}
+                      onChange={(e) => setConfig({ text: e.target.value })}
+                    />
+                  </Field>
+                  <Field label="Level">
+                    <Select
+                      value={String(config.level ?? 2)}
+                      onValueChange={(v) => setConfig({ level: Number(v) })}
+                    >
+                      <SelectTrigger className="w-32">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="1">H1</SelectItem>
+                        <SelectItem value="2">H2</SelectItem>
+                        <SelectItem value="3">H3</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                </>
+              )}
+
+              {type === "TEXT" && (
+                <Field label="Markdown">
+                  <Textarea
+                    value={(config.markdown as string) ?? ""}
+                    onChange={(e) => setConfig({ markdown: e.target.value })}
+                    rows={6}
+                    placeholder={"## Heading\n\nSome **bold** text and a\n- bullet\n- list"}
                   />
                 </Field>
               )}
-              <QueryParamsEditor
-                query={raw.query ?? {}}
-                onChange={(query) => setRaw({ query })}
-              />
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={runPreview}
-                disabled={preview.isPending || !raw.connectionId || !raw.path}
-              >
-                {preview.isPending ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : (
-                  <Play className="size-4" />
-                )}
-                Test
-              </Button>
-              {previewText !== null && (
-                <pre className="max-h-48 overflow-auto rounded bg-muted p-2 text-[11px]">
-                  {previewText}
-                </pre>
+
+              {type === "CALLOUT" && (
+                <>
+                  <Field label="Text">
+                    <Textarea
+                      value={(config.text as string) ?? ""}
+                      onChange={(e) => setConfig({ text: e.target.value })}
+                      rows={3}
+                    />
+                  </Field>
+                  <Field label="Tone">
+                    <Select
+                      value={(config.tone as string) ?? "info"}
+                      onValueChange={(v) => setConfig({ tone: v })}
+                    >
+                      <SelectTrigger className="w-40">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {["info", "success", "warning", "danger"].map((t) => (
+                          <SelectItem key={t} value={t}>
+                            {t}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  <Field label="Icon (lucide, optional)">
+                    <Input
+                      value={(config.icon as string) ?? ""}
+                      onChange={(e) => setConfig({ icon: e.target.value })}
+                      placeholder="info"
+                    />
+                  </Field>
+                </>
               )}
-            </div>
-          )}
 
-          {type === "CHART" && (
-            <ChartConfigEditor
-              config={config as unknown as ChartConfig}
-              setConfig={setConfig}
-            />
-          )}
+              {/* Group child: pick a slice of the group's response. */}
+              {isGroupChildData && (
+                <div className="space-y-3 rounded-lg border p-3">
+                  <p className="text-sm font-medium">Data from group</p>
+                  <p className="text-xs text-muted-foreground">
+                    This block reads a section of the group&apos;s single API
+                    response.
+                  </p>
+                  <Field label="Section path">
+                    <Input
+                      className="font-mono text-xs"
+                      value={groupRoot}
+                      onChange={(e) => setGroupRoot(e.target.value)}
+                      placeholder="data.stats"
+                    />
+                  </Field>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={runPreview}
+                    disabled={preview.isPending || !groupSource}
+                  >
+                    {preview.isPending ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <Play className="size-4" />
+                    )}
+                    Test group source
+                  </Button>
+                  {previewText !== null && <JsonHighlight raw={previewText} />}
+                </div>
+              )}
 
-          {type === "STAT" && (
-            <StatConfigEditor
-              config={config as unknown as StatConfig}
-              setConfig={setConfig}
-            />
-          )}
+              {/* Standalone raw endpoint (chart / stat / button). */}
+              {showRawEditor && raw && (
+                <div className="space-y-3 rounded-lg border p-3">
+                  <p className="text-sm font-medium">Data source</p>
+                  <Field label="Connection">
+                    <Select
+                      value={raw.connectionId}
+                      onValueChange={(v) => setRaw({ connectionId: v })}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Pick a connection" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {connections.map((c) => (
+                          <SelectItem key={c.id} value={c.id}>
+                            {c.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  <div className="flex gap-2">
+                    <Select
+                      value={raw.method}
+                      onValueChange={(v) => setRaw({ method: v as HttpMethod })}
+                    >
+                      <SelectTrigger size="sm" className="w-28">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {METHODS.map((m) => (
+                          <SelectItem key={m} value={m}>
+                            {m}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      className="h-8 font-mono text-xs"
+                      value={raw.path}
+                      onChange={(e) => setRaw({ path: e.target.value })}
+                      placeholder="/analytics/revenue"
+                    />
+                  </div>
+                  {type !== "BUTTON" && (
+                    <Field label="Root path (to the array/object)">
+                      <Input
+                        className="font-mono text-xs"
+                        value={raw.rootPath ?? ""}
+                        onChange={(e) => setRaw({ rootPath: e.target.value })}
+                        placeholder="data.items"
+                      />
+                    </Field>
+                  )}
+                  <QueryParamsEditor
+                    query={raw.query ?? {}}
+                    onChange={(query) => setRaw({ query })}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={runPreview}
+                    disabled={preview.isPending || !raw.connectionId || !raw.path}
+                  >
+                    {preview.isPending ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <Play className="size-4" />
+                    )}
+                    Test
+                  </Button>
+                  {previewText !== null && <JsonHighlight raw={previewText} />}
+                </div>
+              )}
 
-          {type === "BUTTON" && (
-            <>
-              <Field label="Button label">
-                <Input
-                  value={(config.label as string) ?? ""}
-                  onChange={(e) => setConfig({ label: e.target.value })}
+              {type === "CHART" && (
+                <ChartConfigEditor
+                  config={config as unknown as ChartConfig}
+                  setConfig={setConfig}
                 />
-              </Field>
-              <Field label="Style">
-                <Select
-                  value={(config.variant as string) ?? "default"}
-                  onValueChange={(v) => setConfig({ variant: v })}
-                >
-                  <SelectTrigger className="w-40">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {["default", "secondary", "destructive", "outline"].map((v) => (
-                      <SelectItem key={v} value={v}>
-                        {v}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field label="Confirm message (optional)">
-                <Input
-                  value={(config.confirm as string) ?? ""}
-                  onChange={(e) =>
-                    setConfig({ confirm: e.target.value || undefined })
-                  }
-                  placeholder="This cannot be undone."
+              )}
+
+              {type === "STAT" && (
+                <StatConfigEditor
+                  config={config as unknown as StatConfig}
+                  setConfig={setConfig}
                 />
-              </Field>
-              <Field label="Success message (optional)">
-                <Input
-                  value={(config.successMessage as string) ?? ""}
-                  onChange={(e) =>
-                    setConfig({ successMessage: e.target.value || undefined })
-                  }
-                />
-              </Field>
+              )}
+
+              {type === "BUTTON" && (
+                <>
+                  <Field label="Button label">
+                    <Input
+                      value={(config.label as string) ?? ""}
+                      onChange={(e) => setConfig({ label: e.target.value })}
+                    />
+                  </Field>
+                  <Field label="Style">
+                    <Select
+                      value={(config.variant as string) ?? "default"}
+                      onValueChange={(v) => setConfig({ variant: v })}
+                    >
+                      <SelectTrigger className="w-40">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {["default", "secondary", "destructive", "outline"].map((v) => (
+                          <SelectItem key={v} value={v}>
+                            {v}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  <Field label="Confirm message (optional)">
+                    <Input
+                      value={(config.confirm as string) ?? ""}
+                      onChange={(e) =>
+                        setConfig({ confirm: e.target.value || undefined })
+                      }
+                      placeholder="This cannot be undone."
+                    />
+                  </Field>
+                  <Field label="Success message (optional)">
+                    <Input
+                      value={(config.successMessage as string) ?? ""}
+                      onChange={(e) =>
+                        setConfig({ successMessage: e.target.value || undefined })
+                      }
+                    />
+                  </Field>
+                </>
+              )}
             </>
           )}
 
           {/* Common: width + visibility */}
-          {type !== "DIVIDER" && (
+          {!(type === "DIVIDER" && !isGroup) && (
             <Field label="Width">
               <Select
-                value={draft.width}
-                onValueChange={(v) =>
-                  setDraft((d) => ({ ...d, width: v as BlockWidth }))
-                }
+                value={width}
+                onValueChange={(v) => {
+                  if (isGroup) setGroupDraft((d) => ({ ...d, width: v as BlockWidth }));
+                  else setBlockDraft((d) => ({ ...d, width: v as BlockWidth }));
+                }}
               >
                 <SelectTrigger className="w-40">
                   <SelectValue />
@@ -409,7 +617,7 @@ export function BlockEditorSheet({
                 <label key={role} className="flex items-center gap-1.5 text-sm">
                   <input
                     type="checkbox"
-                    checked={draft.visibleToRoles?.includes(role) ?? false}
+                    checked={visibleToRoles?.includes(role) ?? false}
                     onChange={() => toggleRole(role)}
                   />
                   {role}
@@ -420,11 +628,21 @@ export function BlockEditorSheet({
         </div>
 
         <SheetFooter>
-          <Button onClick={submit}>{block ? "Save block" : "Add block"}</Button>
+          <Button onClick={submit}>
+            {editingExisting ? "Save" : "Add"} {isGroup ? "group" : "block"}
+          </Button>
         </SheetFooter>
       </SheetContent>
     </Sheet>
   );
+}
+
+function nextRoles(current: Role[] | null, role: Role): Role[] | null {
+  const list = current ?? [];
+  const next = list.includes(role)
+    ? list.filter((r) => r !== role)
+    : [...list, role];
+  return next.length ? next : null;
 }
 
 function Field({

@@ -6,6 +6,7 @@ import { Loader2, Play } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { JsonHighlight } from "@/components/ui/json-highlight";
 import {
   Card,
   CardContent,
@@ -431,9 +432,7 @@ export function ResourceBasicsForm({
                     response — no need to type a path. Use the keys below to
                     define your fields.
                   </p>
-                  <pre className="max-h-56 overflow-auto rounded bg-muted p-2 text-[11px]">
-                    {testResult.text}
-                  </pre>
+                  <JsonHighlight raw={testResult.text} maxHeight="14rem" />
                 </div>
               );
             })()}
