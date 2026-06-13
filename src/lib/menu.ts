@@ -14,7 +14,10 @@ export interface MenuNode {
 export async function getMenuForRole(role: Role): Promise<MenuNode[]> {
   const items = await prisma.menuItem.findMany({
     orderBy: { order: "asc" },
-    include: { resource: { select: { slug: true } } },
+    include: {
+      resource: { select: { slug: true } },
+      page: { select: { slug: true } },
+    },
   });
 
   const visible = items.filter((item) => {
@@ -32,7 +35,9 @@ export async function getMenuForRole(role: Role): Promise<MenuNode[]> {
       href:
         item.type === "RESOURCE" && item.resource
           ? `/dashboard/r/${item.resource.slug}`
-          : item.href,
+          : item.type === "PAGE" && item.page
+            ? `/dashboard/p/${item.page.slug}`
+            : item.href,
       children: [],
     });
   }

@@ -8,13 +8,14 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { auth } from "@/auth";
-import { decrypt } from "@/lib/crypto";
+import { buildAuthHeaders } from "@/lib/api-connection";
+import { getPath } from "@/lib/json-path";
 import { prisma } from "@/lib/prisma";
 import { hasRole } from "@/lib/roles";
 import { toResourceDef } from "@/lib/resources";
-import type { ApiResponse, DataRecord } from "@/types/api";
-import type { AuthConfig, CrudOperation } from "@/types/meta";
-import type { ApiConnection, Prisma, Role } from "@prisma/client";
+import type { ApiErrorCode, ApiResponse, DataRecord, ListMeta } from "@/types/api";
+import type { CrudOperation, ResponseMapping } from "@/types/meta";
+import type { Prisma, Role } from "@prisma/client";
 
 const requestSchema = z.object({
   resourceSlug: z.string().min(1),
@@ -60,25 +61,6 @@ function envelopeError(
   );
 }
 
-function buildAuthHeaders(connection: ApiConnection): Record<string, string> {
-  if (connection.authType === "NONE" || !connection.authConfig) return {};
-  const config = JSON.parse(decrypt(connection.authConfig)) as AuthConfig;
-  switch (config.type) {
-    case "BEARER_TOKEN":
-      return { Authorization: `Bearer ${config.token}` };
-    case "API_KEY_HEADER":
-      return { [config.headerName]: config.key };
-    case "BASIC":
-      return {
-        Authorization: `Basic ${Buffer.from(
-          `${config.username}:${config.password}`,
-        ).toString("base64")}`,
-      };
-    default:
-      return {};
-  }
-}
-
 export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session?.user) {
@@ -101,8 +83,8 @@ export async function POST(req: NextRequest) {
   const resource = toResourceDef(row);
 
   const permission = OPERATION_TO_PERMISSION[operation];
-  const capabilityKey = permission as keyof typeof resource.capabilities;
-  if (!resource.capabilities[capabilityKey]) {
+  const endpoint = resource.endpoints[operation];
+  if (!endpoint || endpoint.enabled === false) {
     return envelopeError(
       "FORBIDDEN",
       `Operation "${operation}" is disabled for this resource`,
@@ -118,13 +100,8 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const endpoint = resource.endpoints[operation];
-  if (!endpoint) {
-    return envelopeError(
-      "VALIDATION_ERROR",
-      `No endpoint configured for "${operation}"`,
-      422,
-    );
+  if ((operation === "getOne" || operation === "update" || operation === "delete") && id == null) {
+    return envelopeError("VALIDATION_ERROR", "Missing record id", 422);
   }
   if ((operation === "getOne" || operation === "update" || operation === "delete") && id == null) {
     return envelopeError("VALIDATION_ERROR", "Missing record id", 422);
@@ -135,16 +112,25 @@ export async function POST(req: NextRequest) {
   const url = new URL(`${base}${path.startsWith("/") ? path : `/${path}`}`);
 
   if (operation === "list" && query) {
-    url.searchParams.set("page", String(query.page));
-    url.searchParams.set("pageSize", String(query.pageSize));
-    if (query.sort) url.searchParams.set("sort", query.sort);
-    if (query.search) url.searchParams.set("search", query.search);
+    const rq = resource.apiMapping.request;
+    const flat = rq.filterStyle === "flat";
+    url.searchParams.set(rq.pageParam, String(query.page));
+    url.searchParams.set(rq.pageSizeParam, String(query.pageSize));
+    if (query.sort) url.searchParams.set(rq.sortParam, query.sort);
+    if (query.search) url.searchParams.set(rq.searchParam, query.search);
     for (const [field, value] of Object.entries(query.filters ?? {})) {
       if (typeof value === "string") {
-        if (value !== "") url.searchParams.set(`filter[${field}]`, value);
+        if (value !== "")
+          url.searchParams.set(flat ? field : `filter[${field}]`, value);
       } else {
         for (const [op, v] of Object.entries(value)) {
-          if (v !== "") url.searchParams.set(`filter[${field}][${op}]`, v);
+          if (v === "") continue;
+          // Flat style supports equality only; skip operator-qualified filters.
+          if (flat) {
+            if (op === "eq") url.searchParams.set(field, v);
+          } else {
+            url.searchParams.set(`filter[${field}][${op}]`, v);
+          }
         }
       }
     }
@@ -177,19 +163,27 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let body: ApiResponse<DataRecord> | null = null;
+  let rawBody: unknown = null;
   try {
-    body = (await upstream.json()) as ApiResponse<DataRecord>;
+    rawBody = await upstream.json();
   } catch {
-    return envelopeError(
-      "INTERNAL_ERROR",
-      `External API returned a non-JSON response (HTTP ${upstream.status}). It must follow the response envelope — see /docs.`,
-      502,
-    );
+    // Empty / non-JSON body (e.g. 204 on delete) — fall back to null.
+    rawBody = null;
   }
 
+  const body = normalizeResponse(
+    rawBody,
+    upstream.ok,
+    upstream.statusText,
+    {
+      ...resource.apiMapping.response,
+      // Per-endpoint data path wins over the resource-wide default.
+      dataPath: endpoint.dataPath ?? resource.apiMapping.response.dataPath,
+    },
+    query,
+  );
+
   if (
-    body &&
     body.success === true &&
     (operation === "create" || operation === "update" || operation === "delete")
   ) {
@@ -210,5 +204,69 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  return NextResponse.json(body, { status: upstream.status });
+  return NextResponse.json(body);
+}
+
+/** Adapts an arbitrary upstream response into the standard envelope. */
+function normalizeResponse(
+  body: unknown,
+  httpOk: boolean,
+  statusText: string,
+  m: ResponseMapping,
+  query?: { page: number; pageSize: number },
+): ApiResponse<DataRecord> {
+  const envelopeSuccess = (body as { success?: unknown } | null)?.success;
+  const success = m.successPath
+    ? !!getPath(body, m.successPath)
+    : typeof envelopeSuccess === "boolean"
+      ? envelopeSuccess
+      : httpOk;
+
+  if (!success) {
+    const rawMsg = m.errorPath
+      ? getPath(body, m.errorPath)
+      : getPath(body, "error.message");
+    const message =
+      String(rawMsg ?? "") || statusText || "Request failed";
+    const code =
+      (getPath(body, "error.code") as ApiErrorCode | undefined) ??
+      "INTERNAL_ERROR";
+    const fields = getPath(body, "error.fields");
+    return {
+      success: false,
+      error: {
+        code,
+        message,
+        ...(fields && typeof fields === "object"
+          ? { fields: fields as Record<string, string> }
+          : {}),
+      },
+    };
+  }
+
+  const data = (m.dataPath ? getPath(body, m.dataPath) : body) ?? null;
+
+  const totalRaw = getPath(body, m.totalPath);
+  const total =
+    typeof totalRaw === "number"
+      ? totalRaw
+      : typeof totalRaw === "string" && totalRaw.trim() !== "" && !Number.isNaN(Number(totalRaw))
+        ? Number(totalRaw)
+        : undefined;
+  let meta: ListMeta | undefined;
+  if (total != null && query) {
+    const pageSize = query.pageSize || 10;
+    meta = {
+      page: query.page || 1,
+      pageSize,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    };
+  }
+
+  return {
+    success: true,
+    data: data as DataRecord,
+    ...(meta && { meta }),
+  };
 }

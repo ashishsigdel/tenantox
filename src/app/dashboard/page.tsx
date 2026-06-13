@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Database, Plug, Users } from "lucide-react";
+import { LayoutDashboard, Plug, Users } from "lucide-react";
 
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
@@ -14,19 +14,18 @@ import {
 
 export default async function DashboardHome() {
   const session = await auth();
-  const [resourceCount, connectionCount, userCount, resources] =
-    await Promise.all([
-      prisma.resource.count(),
-      prisma.apiConnection.count(),
-      prisma.user.count(),
-      prisma.resource.findMany({
-        select: { id: true, name: true, slug: true, icon: true },
-        orderBy: { name: "asc" },
-      }),
-    ]);
+  const [pageCount, connectionCount, userCount, pages] = await Promise.all([
+    prisma.page.count(),
+    prisma.apiConnection.count(),
+    prisma.user.count(),
+    prisma.page.findMany({
+      select: { id: true, name: true, slug: true, icon: true },
+      orderBy: { name: "asc" },
+    }),
+  ]);
 
   const stats = [
-    { label: "Resources", value: resourceCount, icon: Database },
+    { label: "Pages", value: pageCount, icon: LayoutDashboard },
     { label: "API Connections", value: connectionCount, icon: Plug },
     { label: "Dashboard Users", value: userCount, icon: Users },
   ];
@@ -60,36 +59,33 @@ export default async function DashboardHome() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Resources</CardTitle>
-          <CardDescription>
-            Jump straight into managing your data.
-          </CardDescription>
+          <CardTitle>Pages</CardTitle>
+          <CardDescription>Jump straight into your pages.</CardDescription>
         </CardHeader>
         <CardContent>
-          {resources.length === 0 ? (
+          {pages.length === 0 ? (
             <div className="gradient-accent flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed px-6 py-12 text-center">
               <div className="flex size-10 items-center justify-center rounded-lg bg-card text-muted-foreground ring-1 ring-border">
-                <Database className="size-5" />
+                <LayoutDashboard className="size-5" />
               </div>
-              <p className="text-sm font-medium">No resources yet</p>
+              <p className="text-sm font-medium">No pages yet</p>
               <p className="max-w-xs text-sm text-muted-foreground">
-                Create your first resource in Settings → Resources to start
-                managing data.
+                Create your first page in Settings → Pages to start building.
               </p>
             </div>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {resources.map((resource) => (
+              {pages.map((page) => (
                 <Link
-                  key={resource.id}
-                  href={`/dashboard/r/${resource.slug}`}
+                  key={page.id}
+                  href={`/dashboard/p/${page.slug}`}
                   className="flex items-center gap-3 rounded-lg border bg-card p-3 transition-colors hover:border-foreground/15 hover:bg-accent"
                 >
                   <DynamicIcon
-                    name={resource.icon}
+                    name={page.icon}
                     className="size-5 text-muted-foreground"
                   />
-                  <span className="font-medium">{resource.name}</span>
+                  <span className="font-medium">{page.name}</span>
                 </Link>
               ))}
             </div>

@@ -46,8 +46,20 @@ enum FieldType {
 enum MenuItemType {
   GROUP
   RESOURCE
+  PAGE
   LINK
   DIVIDER
+}
+
+enum BlockType {
+  TABLE
+  CHART
+  STAT
+  BUTTON
+  HEADING
+  TEXT
+  DIVIDER
+  CALLOUT
 }
 
 enum ActivityAction {
@@ -97,10 +109,43 @@ model Resource {
   capabilities    Json
   // { create: Role, update: Role, delete: Role, view: Role } — minimum role per operation
   permissions     Json
+  // { request: {pageParam,...,filterStyle}, response: {dataPath,totalPath,successPath,errorPath} }
+  apiMapping      Json?
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
   fields          FieldDefinition[]
   menuItems       MenuItem[]
+}
+
+model Page {
+  id          String     @id @default(cuid())
+  name        String
+  slug        String     @unique
+  icon        String?
+  description String?
+  // Minimum role required to view the page.
+  viewRole    Role       @default(VIEWER)
+  blocks      Block[]
+  menuItems   MenuItem[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+model Block {
+  id         String    @id @default(cuid())
+  pageId     String
+  page       Page      @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  type       BlockType
+  order      Int       @default(0)
+  width      String    @default("full") // full | half | third
+  // Type-specific config: title, chart type, axis map, text/markdown, metrics[], button action, ...
+  config     Json?
+  // Data binding: { mode:"resource", resourceId } | { mode:"raw", connectionId, method, path, rootPath?, query? }
+  dataSource Json?
+  // JSON array of roles allowed to see this block; null = inherit page.viewRole.
+  visibleToRoles Json?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 }
 
 model FieldDefinition {
@@ -149,6 +194,8 @@ model MenuItem {
   type           MenuItemType @default(RESOURCE)
   resourceId     String?
   resource       Resource?    @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  pageId         String?
+  page           Page?        @relation(fields: [pageId], references: [id], onDelete: Cascade)
   href           String?
   // JSON array of roles; null = visible to all
   visibleToRoles Json?

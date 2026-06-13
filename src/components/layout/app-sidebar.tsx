@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Settings2 } from "lucide-react";
+import { BookOpen, LayoutDashboard, Settings } from "lucide-react";
 
 import {
   Sidebar,
@@ -22,26 +22,24 @@ import {
 } from "@/components/ui/sidebar";
 import { DynamicIcon } from "@/lib/icons";
 import type { MenuNode } from "@/lib/menu";
+import { SETTINGS_BG_KEY } from "@/components/layout/settings-modal";
 
-interface SettingsLink {
-  label: string;
-  href: string;
-  icon: string;
-}
-
-export function AppSidebar({
-  menu,
-  settingsLinks,
-}: {
-  menu: MenuNode[];
-  settingsLinks: SettingsLink[];
-}) {
+export function AppSidebar({ menu }: { menu: MenuNode[] }) {
   const pathname = usePathname();
   const isActive = (href: string | null) =>
     !!href &&
     (href === "/dashboard"
       ? pathname === "/dashboard"
       : pathname.startsWith(href));
+
+  // Remember where the user was so the settings modal can return there on close.
+  const openSettings = () => {
+    try {
+      sessionStorage.setItem(SETTINGS_BG_KEY, pathname);
+    } catch {
+      // ignore unavailable sessionStorage
+    }
+  };
 
   function renderLeaf(node: MenuNode) {
     if (node.type === "DIVIDER") {
@@ -111,29 +109,29 @@ export function AppSidebar({
         ))}
       </SidebarContent>
 
-      {settingsLinks.length > 0 && (
-        <SidebarFooter>
-          <SidebarGroup>
-            <SidebarGroupLabel className="flex items-center gap-1">
-              <Settings2 className="size-3" /> Settings
-            </SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {settingsLinks.map((link) => (
-                  <SidebarMenuItem key={link.href}>
-                    <SidebarMenuButton asChild isActive={isActive(link.href)}>
-                      <Link href={link.href}>
-                        <DynamicIcon name={link.icon} />
-                        <span>{link.label}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        </SidebarFooter>
-      )}
+      <SidebarFooter>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              asChild
+              isActive={isActive("/dashboard/settings")}
+            >
+              <Link href="/dashboard/settings/account" onClick={openSettings}>
+                <Settings />
+                <span>Settings</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild isActive={isActive("/docs")}>
+              <Link href="/docs">
+                <BookOpen />
+                <span>API Docs</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarFooter>
     </Sidebar>
   );
 }

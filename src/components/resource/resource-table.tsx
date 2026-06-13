@@ -1,8 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
   flexRender,
   getCoreRowModel,
@@ -68,7 +66,15 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { CellRenderer } from "@/components/resource/cell-renderer";
+import { ResourceForm } from "@/components/resource/resource-form";
+import { RecordDetail, RecordEditor } from "@/components/resource/record-views";
 import {
   DataApiError,
   useDeleteRecord,
@@ -175,7 +181,6 @@ export function ResourceTable({
   resource: ResourceDef;
   role: Role;
 }) {
-  const router = useRouter();
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [sort, setSort] = useState<string | undefined>(undefined);
@@ -188,21 +193,25 @@ export function ResourceTable({
   const [deleteTarget, setDeleteTarget] = useState<
     { ids: (string | number)[] } | null
   >(null);
+  const [formSheet, setFormSheet] = useState<
+    { mode: "create" } | { mode: "edit"; id: string } | null
+  >(null);
+  const [detailId, setDetailId] = useState<string | null>(null);
 
   const debouncedSearch = useDebouncedValue(search, 350);
   const pk = resource.primaryKeyField;
 
   const can = {
     create:
-      resource.capabilities.create &&
+      resource.endpoints.create.enabled &&
       hasRole(role, resource.permissions.create),
     update:
-      resource.capabilities.update &&
+      resource.endpoints.update.enabled &&
       hasRole(role, resource.permissions.update),
     delete:
-      resource.capabilities.delete &&
+      resource.endpoints.delete.enabled &&
       hasRole(role, resource.permissions.delete),
-    view: resource.capabilities.view,
+    view: resource.endpoints.getOne.enabled,
   };
 
   const { data, isLoading, isFetching, error } = useRecordList(resource.slug, {
@@ -303,17 +312,15 @@ export function ResourceTable({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
                 {can.view && (
-                  <DropdownMenuItem asChild>
-                    <Link href={`/dashboard/r/${resource.slug}/${id}`}>
-                      <Eye className="size-4" /> View
-                    </Link>
+                  <DropdownMenuItem onClick={() => setDetailId(String(id))}>
+                    <Eye className="size-4" /> View
                   </DropdownMenuItem>
                 )}
                 {can.update && (
-                  <DropdownMenuItem asChild>
-                    <Link href={`/dashboard/r/${resource.slug}/${id}/edit`}>
-                      <Pencil className="size-4" /> Edit
-                    </Link>
+                  <DropdownMenuItem
+                    onClick={() => setFormSheet({ mode: "edit", id: String(id) })}
+                  >
+                    <Pencil className="size-4" /> Edit
                   </DropdownMenuItem>
                 )}
                 {can.delete && (
@@ -482,11 +489,9 @@ export function ResourceTable({
             </Button>
           )}
           {can.create && (
-            <Button size="sm" asChild>
-              <Link href={`/dashboard/r/${resource.slug}/new`}>
-                <Plus className="size-4" />
-                New {resource.name.replace(/s$/, "")}
-              </Link>
+            <Button size="sm" onClick={() => setFormSheet({ mode: "create" })}>
+              <Plus className="size-4" />
+              New {resource.name.replace(/s$/, "")}
             </Button>
           )}
         </div>
@@ -548,10 +553,7 @@ export function ResourceTable({
                   data-state={row.getIsSelected() && "selected"}
                   className={can.view ? "cursor-pointer" : undefined}
                   onClick={() =>
-                    can.view &&
-                    router.push(
-                      `/dashboard/r/${resource.slug}/${row.original[pk]}`,
-                    )
+                    can.view && setDetailId(String(row.original[pk]))
                   }
                 >
                   {row.getVisibleCells().map((cell) => (
@@ -642,6 +644,64 @@ export function ResourceTable({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Create / edit record */}
+      <Sheet
+        open={formSheet !== null}
+        onOpenChange={(open) => !open && setFormSheet(null)}
+      >
+        <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
+          <SheetHeader>
+            <SheetTitle>
+              {formSheet?.mode === "edit" ? "Edit" : "New"}{" "}
+              {resource.name.replace(/s$/, "")}
+            </SheetTitle>
+          </SheetHeader>
+          <div className="px-4 pb-6">
+            {formSheet?.mode === "edit" ? (
+              <RecordEditor
+                resource={resource}
+                recordId={formSheet.id}
+                onSuccess={() => setFormSheet(null)}
+                onCancel={() => setFormSheet(null)}
+              />
+            ) : formSheet?.mode === "create" ? (
+              <ResourceForm
+                resource={resource}
+                onSuccess={() => setFormSheet(null)}
+                onCancel={() => setFormSheet(null)}
+              />
+            ) : null}
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* Record detail */}
+      <Sheet
+        open={detailId !== null}
+        onOpenChange={(open) => !open && setDetailId(null)}
+      >
+        <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
+          <SheetHeader>
+            <SheetTitle>{resource.name.replace(/s$/, "")} details</SheetTitle>
+          </SheetHeader>
+          <div className="px-4 pb-6">
+            {detailId !== null && (
+              <RecordDetail
+                resource={resource}
+                recordId={detailId}
+                role={role}
+                onEdit={() => {
+                  const id = detailId;
+                  setDetailId(null);
+                  setFormSheet({ mode: "edit", id });
+                }}
+                onDeleted={() => setDetailId(null)}
+              />
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

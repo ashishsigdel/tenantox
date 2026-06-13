@@ -46,19 +46,29 @@ function ErrorState({ error }: { error: unknown }) {
   );
 }
 
-/** Edit page body: loads the record, then renders the dynamic form. */
+/** Edit body: loads the record, then renders the dynamic form. */
 export function RecordEditor({
   resource,
   recordId,
+  onSuccess,
+  onCancel,
 }: {
   resource: ResourceDef;
   recordId: string;
+  onSuccess?: () => void;
+  onCancel?: () => void;
 }) {
   const { data, isLoading, error } = useRecord(resource.slug, recordId);
   if (isLoading) return <LoadingState />;
   if (error || !data) return <ErrorState error={error} />;
   return (
-    <ResourceForm resource={resource} record={data.data} recordId={recordId} />
+    <ResourceForm
+      resource={resource}
+      record={data.data}
+      recordId={recordId}
+      onSuccess={onSuccess}
+      onCancel={onCancel}
+    />
   );
 }
 
@@ -67,10 +77,16 @@ export function RecordDetail({
   resource,
   recordId,
   role,
+  onEdit,
+  onDeleted,
 }: {
   resource: ResourceDef;
   recordId: string;
   role: Role;
+  /** Embedded (sheet) mode: open the edit form instead of navigating. */
+  onEdit?: () => void;
+  /** Embedded mode: called after delete instead of navigating. */
+  onDeleted?: () => void;
 }) {
   const router = useRouter();
   const { data, isLoading, error } = useRecord(resource.slug, recordId);
@@ -82,16 +98,19 @@ export function RecordDetail({
 
   const record = data.data;
   const canUpdate =
-    resource.capabilities.update && hasRole(role, resource.permissions.update);
+    resource.endpoints.update.enabled &&
+    hasRole(role, resource.permissions.update);
   const canDelete =
-    resource.capabilities.delete && hasRole(role, resource.permissions.delete);
+    resource.endpoints.delete.enabled &&
+    hasRole(role, resource.permissions.delete);
 
   async function onDelete() {
     setConfirmOpen(false);
     try {
       await deleteMutation.mutateAsync(recordId);
       toast.success("Record deleted");
-      router.push(`/dashboard/r/${resource.slug}`);
+      if (onDeleted) onDeleted();
+      else router.push(`/dashboard/r/${resource.slug}`);
     } catch (e) {
       toast.error(
         e instanceof DataApiError ? e.message : "Failed to delete record",
@@ -106,13 +125,18 @@ export function RecordDetail({
           {String(record[resource.titleField] ?? `#${recordId}`)}
         </h2>
         <div className="flex gap-2">
-          {canUpdate && (
-            <Button variant="outline" size="sm" asChild>
-              <Link href={`/dashboard/r/${resource.slug}/${recordId}/edit`}>
+          {canUpdate &&
+            (onEdit ? (
+              <Button variant="outline" size="sm" onClick={onEdit}>
                 <Pencil className="size-4" /> Edit
-              </Link>
-            </Button>
-          )}
+              </Button>
+            ) : (
+              <Button variant="outline" size="sm" asChild>
+                <Link href={`/dashboard/r/${resource.slug}/${recordId}/edit`}>
+                  <Pencil className="size-4" /> Edit
+                </Link>
+              </Button>
+            ))}
           {canDelete && (
             <Button
               variant="destructive"

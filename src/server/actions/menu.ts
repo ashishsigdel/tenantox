@@ -16,8 +16,9 @@ const menuItemSchema = z.object({
   id: z.string().optional(),
   label: z.string().min(1, "Label is required"),
   icon: z.string().optional(),
-  type: z.enum(["GROUP", "RESOURCE", "LINK", "DIVIDER"]),
+  type: z.enum(["GROUP", "RESOURCE", "PAGE", "LINK", "DIVIDER"]),
   resourceId: z.string().optional(),
+  pageId: z.string().optional(),
   href: z.string().optional(),
   parentId: z.string().nullable().optional(),
   visibleToRoles: z
@@ -35,6 +36,9 @@ export async function saveMenuItem(input: MenuItemInput): Promise<ActionResult> 
     if (data.type === "RESOURCE" && !data.resourceId) {
       throw new Error("Pick a resource for this menu item");
     }
+    if (data.type === "PAGE" && !data.pageId) {
+      throw new Error("Pick a page for this menu item");
+    }
     if (data.type === "LINK" && !data.href) {
       throw new Error("Enter a URL for this menu item");
     }
@@ -44,6 +48,7 @@ export async function saveMenuItem(input: MenuItemInput): Promise<ActionResult> 
       icon: data.icon || null,
       type: data.type,
       resourceId: data.type === "RESOURCE" ? data.resourceId : null,
+      pageId: data.type === "PAGE" ? data.pageId : null,
       href: data.type === "LINK" ? data.href : null,
       parentId: data.parentId ?? null,
       visibleToRoles: (data.visibleToRoles?.length

@@ -55,7 +55,7 @@ export default function LoginPage() {
       <div className="relative hidden flex-col lg:flex">
         <div className="relative flex-1 overflow-hidden">
           <Image
-            src="/images/auth-art.jpg"
+            src="/images/login-page-art.png"
             alt=""
             fill
             priority

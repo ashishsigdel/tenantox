@@ -116,6 +116,66 @@ export function useDeleteRecord(resourceSlug: string) {
   });
 }
 
+/** Result envelope returned by the block / preview gateways. */
+interface BlockDataResult {
+  success: boolean;
+  status: number;
+  data: unknown;
+  error?: { message: string };
+}
+
+async function callBlockEndpoint(
+  url: string,
+  body: Record<string, unknown>,
+): Promise<unknown> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const json = (await res.json().catch(() => null)) as BlockDataResult | null;
+  if (!json?.success) {
+    throw new DataApiError(
+      "INTERNAL_ERROR",
+      json?.error?.message ?? "Request failed",
+    );
+  }
+  return json.data;
+}
+
+/** Fetches a block's data by id; the request shape is resolved server-side. */
+export function useBlockData(
+  blockId: string,
+  vars?: Record<string, string>,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ["block-data", blockId, vars],
+    queryFn: () => callBlockEndpoint("/api/proxy/block", { blockId, vars }),
+    enabled: enabled && !!blockId,
+  });
+}
+
+/** Fires a block's action (POST/PUT/DELETE) on demand, e.g. a button click. */
+export function useBlockAction(blockId: string) {
+  return useMutation({
+    mutationFn: (payload?: Record<string, unknown>) =>
+      callBlockEndpoint("/api/proxy/block", { blockId, payload }),
+  });
+}
+
+/** Builder-only: previews a raw data source before the block is saved. */
+export function usePreviewSource() {
+  return useMutation({
+    mutationFn: (source: {
+      connectionId: string;
+      method: string;
+      path: string;
+      query?: Record<string, string>;
+    }) => callBlockEndpoint("/api/proxy/preview", source),
+  });
+}
+
 /** Loads options for RELATION / dynamic SELECT fields from another resource. */
 export function useRelationOptions(
   resourceSlug: string | undefined,

@@ -16,6 +16,8 @@ const ROLE = z.enum(["SUPER_ADMIN", "ADMIN", "EDITOR", "VIEWER"]);
 const endpointSchema = z.object({
   method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]),
   path: z.string().min(1),
+  enabled: z.boolean().optional(),
+  dataPath: z.string().optional(),
 });
 
 const resourceSchema = z.object({
@@ -47,6 +49,23 @@ const resourceSchema = z.object({
     update: ROLE,
     delete: ROLE,
   }),
+  apiMapping: z
+    .object({
+      request: z.object({
+        pageParam: z.string().default("page"),
+        pageSizeParam: z.string().default("pageSize"),
+        sortParam: z.string().default("sort"),
+        searchParam: z.string().default("search"),
+        filterStyle: z.enum(["bracket", "flat"]).default("bracket"),
+      }),
+      response: z.object({
+        dataPath: z.string().default("data"),
+        totalPath: z.string().default("meta.total"),
+        successPath: z.string().optional(),
+        errorPath: z.string().optional(),
+      }),
+    })
+    .optional(),
 });
 
 export type ResourceInput = z.infer<typeof resourceSchema>;
@@ -73,6 +92,8 @@ export async function saveResource(input: ResourceInput): Promise<ActionResult> 
       titleField: data.titleField,
       capabilities: data.capabilities as unknown as Prisma.InputJsonValue,
       permissions: data.permissions as unknown as Prisma.InputJsonValue,
+      apiMapping: (data.apiMapping ??
+        Prisma.JsonNull) as Prisma.InputJsonValue,
     };
 
     const saved = data.id

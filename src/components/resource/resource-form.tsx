@@ -31,6 +31,8 @@ export function ResourceForm({
   record,
   recordId,
   preview = false,
+  onSuccess,
+  onCancel,
 }: {
   resource: ResourceDef;
   /** Existing record → edit mode; absent → create mode. */
@@ -38,9 +40,14 @@ export function ResourceForm({
   recordId?: string;
   /** Builder preview: validates but never submits to the API. */
   preview?: boolean;
+  /** Embedded (sheet) mode: called after a successful save instead of navigating. */
+  onSuccess?: () => void;
+  /** Embedded mode cancel handler; falls back to router.back() when absent. */
+  onCancel?: () => void;
 }) {
   const router = useRouter();
   const isEdit = recordId != null;
+  const embedded = onSuccess != null;
 
   const formFields = useMemo(
     () => resource.fields.filter((f) => f.showInForm),
@@ -93,8 +100,12 @@ export function ResourceForm({
         await createMutation.mutateAsync(payload);
         toast.success(`${resource.name.replace(/s$/, "")} created`);
       }
-      router.push(`/dashboard/r/${resource.slug}`);
-      router.refresh();
+      if (embedded) {
+        onSuccess!();
+      } else {
+        router.push(`/dashboard/r/${resource.slug}`);
+        router.refresh();
+      }
     } catch (e) {
       if (e instanceof DataApiError) {
         if (e.fields) {
@@ -129,7 +140,7 @@ export function ResourceForm({
           <Button
             type="button"
             variant="outline"
-            onClick={() => router.back()}
+            onClick={() => (onCancel ? onCancel() : router.back())}
             disabled={pending}
           >
             Cancel

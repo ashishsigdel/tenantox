@@ -1,0 +1,630 @@
+"use client";
+
+import { useEffect, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { Loader2, Plus, Play, Trash2 } from "lucide-react";
+import { toast } from "sonner";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { ROLES } from "@/lib/roles";
+import { usePreviewSource } from "@/lib/data-provider";
+import { saveBlock } from "@/server/actions/pages";
+import type {
+  BlockDataSource,
+  BlockDef,
+  BlockWidth,
+  ChartConfig,
+  HttpMethod,
+  StatConfig,
+} from "@/types/meta";
+import type { BlockType, Role } from "@prisma/client";
+
+import { blockTypeMeta, defaultBlockDraft } from "./block-types";
+import { TableSourceEditor } from "./table-source-editor";
+
+type Connection = { id: string; name: string };
+type ResourceOption = { id: string; name: string; slug: string };
+
+type Draft = Omit<BlockDef, "id" | "order">;
+
+const METHODS: HttpMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+
+export function BlockEditorSheet({
+  open,
+  onOpenChange,
+  pageId,
+  block,
+  newType,
+  connections,
+  resources,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  pageId: string;
+  block: BlockDef | null;
+  newType: BlockType | null;
+  connections: Connection[];
+  resources: ResourceOption[];
+}) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [draft, setDraft] = useState<Draft>(defaultBlockDraft("TEXT"));
+  const preview = usePreviewSource();
+  const [previewText, setPreviewText] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setPreviewText(null);
+    if (block) {
+      setDraft({
+        type: block.type,
+        width: block.width,
+        config: block.config,
+        dataSource: block.dataSource,
+        visibleToRoles: block.visibleToRoles,
+      });
+    } else if (newType) {
+      setDraft(defaultBlockDraft(newType));
+    }
+  }, [open, block, newType]);
+
+  const type = draft.type;
+  const meta = blockTypeMeta(type);
+  const isRaw = meta.raw;
+  const config = (draft.config ?? {}) as Record<string, unknown>;
+  const raw =
+    draft.dataSource?.mode === "raw"
+      ? (draft.dataSource as Extract<BlockDataSource, { mode: "raw" }>)
+      : null;
+
+  function setConfig(patch: Record<string, unknown>) {
+    setDraft((d) => ({ ...d, config: { ...(d.config ?? {}), ...patch } }));
+  }
+  function setRaw(patch: Partial<Extract<BlockDataSource, { mode: "raw" }>>) {
+    setDraft((d) => ({
+      ...d,
+      dataSource: { ...(d.dataSource as object), ...patch } as BlockDataSource,
+    }));
+  }
+
+  function toggleRole(role: Role) {
+    setDraft((d) => {
+      const current = d.visibleToRoles ?? [];
+      const next = current.includes(role)
+        ? current.filter((r) => r !== role)
+        : [...current, role];
+      return { ...d, visibleToRoles: next.length ? next : null };
+    });
+  }
+
+  function runPreview() {
+    if (!raw) return;
+    preview.mutate(
+      {
+        connectionId: raw.connectionId,
+        method: raw.method,
+        path: raw.path,
+        query: raw.query,
+      },
+      {
+        onSuccess: (data) =>
+          setPreviewText(JSON.stringify(data, null, 2).slice(0, 4000)),
+        onError: (e) => toast.error((e as Error).message),
+      },
+    );
+  }
+
+  function submit() {
+    startTransition(async () => {
+      const result = await saveBlock({
+        id: block?.id,
+        pageId,
+        type,
+        width: draft.width,
+        config: draft.config as Record<string, unknown> | null,
+        dataSource: draft.dataSource ?? null,
+        visibleToRoles: draft.visibleToRoles,
+      });
+      if (result.ok) {
+        toast.success(block ? "Block saved" : "Block added");
+        onOpenChange(false);
+        router.refresh();
+      } else {
+        toast.error(result.error);
+      }
+    });
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
+        <SheetHeader>
+          <SheetTitle>
+            {block ? "Edit" : "Add"} {meta.label}
+          </SheetTitle>
+          <SheetDescription>{meta.description}</SheetDescription>
+        </SheetHeader>
+
+        <div className="space-y-5 px-4">
+          {/* Type-specific config */}
+          {type === "TABLE" && (
+            <TableSourceEditor
+              value={
+                draft.dataSource?.mode === "resource"
+                  ? draft.dataSource.resourceId
+                  : ""
+              }
+              onChange={(resourceId) =>
+                setDraft((d) => ({
+                  ...d,
+                  dataSource: { mode: "resource", resourceId },
+                }))
+              }
+              connections={connections}
+              resources={resources}
+            />
+          )}
+
+          {type === "HEADING" && (
+            <>
+              <Field label="Text">
+                <Input
+                  value={(config.text as string) ?? ""}
+                  onChange={(e) => setConfig({ text: e.target.value })}
+                />
+              </Field>
+              <Field label="Level">
+                <Select
+                  value={String(config.level ?? 2)}
+                  onValueChange={(v) => setConfig({ level: Number(v) })}
+                >
+                  <SelectTrigger className="w-32">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1">H1</SelectItem>
+                    <SelectItem value="2">H2</SelectItem>
+                    <SelectItem value="3">H3</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+            </>
+          )}
+
+          {type === "TEXT" && (
+            <Field label="Markdown">
+              <Textarea
+                value={(config.markdown as string) ?? ""}
+                onChange={(e) => setConfig({ markdown: e.target.value })}
+                rows={6}
+                placeholder={"## Heading\n\nSome **bold** text and a\n- bullet\n- list"}
+              />
+            </Field>
+          )}
+
+          {type === "CALLOUT" && (
+            <>
+              <Field label="Text">
+                <Textarea
+                  value={(config.text as string) ?? ""}
+                  onChange={(e) => setConfig({ text: e.target.value })}
+                  rows={3}
+                />
+              </Field>
+              <Field label="Tone">
+                <Select
+                  value={(config.tone as string) ?? "info"}
+                  onValueChange={(v) => setConfig({ tone: v })}
+                >
+                  <SelectTrigger className="w-40">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {["info", "success", "warning", "danger"].map((t) => (
+                      <SelectItem key={t} value={t}>
+                        {t}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field label="Icon (lucide, optional)">
+                <Input
+                  value={(config.icon as string) ?? ""}
+                  onChange={(e) => setConfig({ icon: e.target.value })}
+                  placeholder="info"
+                />
+              </Field>
+            </>
+          )}
+
+          {/* Raw data source (chart / stat / button) */}
+          {isRaw && raw && (
+            <div className="space-y-3 rounded-lg border p-3">
+              <p className="text-sm font-medium">Data source</p>
+              <Field label="Connection">
+                <Select
+                  value={raw.connectionId}
+                  onValueChange={(v) => setRaw({ connectionId: v })}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Pick a connection" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {connections.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+              <div className="flex gap-2">
+                <Select
+                  value={raw.method}
+                  onValueChange={(v) => setRaw({ method: v as HttpMethod })}
+                >
+                  <SelectTrigger size="sm" className="w-28">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {METHODS.map((m) => (
+                      <SelectItem key={m} value={m}>
+                        {m}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Input
+                  className="h-8 font-mono text-xs"
+                  value={raw.path}
+                  onChange={(e) => setRaw({ path: e.target.value })}
+                  placeholder="/analytics/revenue"
+                />
+              </div>
+              {type !== "BUTTON" && (
+                <Field label="Root path (to the array/object)">
+                  <Input
+                    className="font-mono text-xs"
+                    value={raw.rootPath ?? ""}
+                    onChange={(e) => setRaw({ rootPath: e.target.value })}
+                    placeholder="data.items"
+                  />
+                </Field>
+              )}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={runPreview}
+                disabled={preview.isPending || !raw.connectionId || !raw.path}
+              >
+                {preview.isPending ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Play className="size-4" />
+                )}
+                Test
+              </Button>
+              {previewText !== null && (
+                <pre className="max-h-48 overflow-auto rounded bg-muted p-2 text-[11px]">
+                  {previewText}
+                </pre>
+              )}
+            </div>
+          )}
+
+          {type === "CHART" && (
+            <ChartConfigEditor
+              config={config as unknown as ChartConfig}
+              setConfig={setConfig}
+            />
+          )}
+
+          {type === "STAT" && (
+            <StatConfigEditor
+              config={config as unknown as StatConfig}
+              setConfig={setConfig}
+            />
+          )}
+
+          {type === "BUTTON" && (
+            <>
+              <Field label="Button label">
+                <Input
+                  value={(config.label as string) ?? ""}
+                  onChange={(e) => setConfig({ label: e.target.value })}
+                />
+              </Field>
+              <Field label="Confirm message (optional)">
+                <Input
+                  value={(config.confirm as string) ?? ""}
+                  onChange={(e) =>
+                    setConfig({ confirm: e.target.value || undefined })
+                  }
+                  placeholder="This cannot be undone."
+                />
+              </Field>
+              <Field label="Success message (optional)">
+                <Input
+                  value={(config.successMessage as string) ?? ""}
+                  onChange={(e) =>
+                    setConfig({ successMessage: e.target.value || undefined })
+                  }
+                />
+              </Field>
+            </>
+          )}
+
+          {/* Common: width + visibility */}
+          {type !== "DIVIDER" && (
+            <Field label="Width">
+              <Select
+                value={draft.width}
+                onValueChange={(v) =>
+                  setDraft((d) => ({ ...d, width: v as BlockWidth }))
+                }
+              >
+                <SelectTrigger className="w-40">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="full">Full</SelectItem>
+                  <SelectItem value="half">Half</SelectItem>
+                  <SelectItem value="third">Third</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+          )}
+
+          <Field label="Visible to roles (none = inherit page)">
+            <div className="flex flex-wrap gap-3">
+              {ROLES.map((role) => (
+                <label key={role} className="flex items-center gap-1.5 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={draft.visibleToRoles?.includes(role) ?? false}
+                    onChange={() => toggleRole(role)}
+                  />
+                  {role}
+                </label>
+              ))}
+            </div>
+          </Field>
+        </div>
+
+        <SheetFooter>
+          <Button onClick={submit} disabled={pending}>
+            {pending && <Loader2 className="size-4 animate-spin" />}
+            {block ? "Save block" : "Add block"}
+          </Button>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-2">
+      <Label>{label}</Label>
+      {children}
+    </div>
+  );
+}
+
+function ChartConfigEditor({
+  config,
+  setConfig,
+}: {
+  config: ChartConfig;
+  setConfig: (patch: Record<string, unknown>) => void;
+}) {
+  const series = config.series ?? [];
+  const update = (i: number, patch: Partial<(typeof series)[number]>) =>
+    setConfig({ series: series.map((s, j) => (j === i ? { ...s, ...patch } : s)) });
+
+  return (
+    <div className="space-y-3 rounded-lg border p-3">
+      <p className="text-sm font-medium">Chart</p>
+      <Field label="Title (optional)">
+        <Input
+          value={config.title ?? ""}
+          onChange={(e) => setConfig({ title: e.target.value })}
+        />
+      </Field>
+      <div className="flex gap-3">
+        <Field label="Type">
+          <Select
+            value={config.chartType ?? "bar"}
+            onValueChange={(v) => setConfig({ chartType: v })}
+          >
+            <SelectTrigger className="w-32">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {["line", "bar", "area", "pie", "donut"].map((t) => (
+                <SelectItem key={t} value={t}>
+                  {t}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
+        <Field label="X path (per row)">
+          <Input
+            className="font-mono text-xs"
+            value={config.xPath ?? ""}
+            onChange={(e) => setConfig({ xPath: e.target.value })}
+            placeholder="month"
+          />
+        </Field>
+      </div>
+      <div className="space-y-2">
+        <Label>Series</Label>
+        {series.map((s, i) => (
+          <div key={i} className="flex gap-2">
+            <Input
+              className="h-8"
+              value={s.label}
+              onChange={(e) => update(i, { label: e.target.value })}
+              placeholder="Label"
+            />
+            <Input
+              className="h-8 font-mono text-xs"
+              value={s.yPath}
+              onChange={(e) => update(i, { yPath: e.target.value })}
+              placeholder="value path"
+            />
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 text-destructive"
+              onClick={() =>
+                setConfig({ series: series.filter((_, j) => j !== i) })
+              }
+            >
+              <Trash2 className="size-4" />
+            </Button>
+          </div>
+        ))}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() =>
+            setConfig({ series: [...series, { label: "", yPath: "", color: "" }] })
+          }
+        >
+          <Plus className="size-4" /> Add series
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function StatConfigEditor({
+  config,
+  setConfig,
+}: {
+  config: StatConfig;
+  setConfig: (patch: Record<string, unknown>) => void;
+}) {
+  const metrics = config.metrics ?? [];
+  const update = (i: number, patch: Partial<(typeof metrics)[number]>) =>
+    setConfig({
+      metrics: metrics.map((m, j) => (j === i ? { ...m, ...patch } : m)),
+    });
+
+  return (
+    <div className="space-y-3 rounded-lg border p-3">
+      <p className="text-sm font-medium">Metrics</p>
+      <div className="flex gap-4">
+        <Field label="Title (optional)">
+          <Input
+            value={config.title ?? ""}
+            onChange={(e) => setConfig({ title: e.target.value })}
+          />
+        </Field>
+        <Field label="Columns per row">
+          <Select
+            value={String(config.columns ?? 3)}
+            onValueChange={(v) => setConfig({ columns: Number(v) })}
+          >
+            <SelectTrigger className="w-24">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="1">1</SelectItem>
+              <SelectItem value="2">2</SelectItem>
+              <SelectItem value="3">3</SelectItem>
+              <SelectItem value="4">4</SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+      </div>
+      {metrics.map((m, i) => (
+        <div key={i} className="space-y-2 rounded border p-2">
+          <div className="flex gap-2">
+            <Input
+              className="h-8"
+              value={m.label}
+              onChange={(e) => update(i, { label: e.target.value })}
+              placeholder="Label"
+            />
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 text-destructive"
+              onClick={() =>
+                setConfig({ metrics: metrics.filter((_, j) => j !== i) })
+              }
+            >
+              <Trash2 className="size-4" />
+            </Button>
+          </div>
+          <div className="flex gap-2">
+            <Select
+              value={m.aggregate}
+              onValueChange={(v) =>
+                update(i, { aggregate: v as (typeof metrics)[number]["aggregate"] })
+              }
+            >
+              <SelectTrigger size="sm" className="w-28">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {["raw", "count", "sum", "avg", "min", "max"].map((a) => (
+                  <SelectItem key={a} value={a}>
+                    {a}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Input
+              className="h-8 font-mono text-xs"
+              value={m.valuePath}
+              onChange={(e) => update(i, { valuePath: e.target.value })}
+              placeholder="value path"
+              disabled={m.aggregate === "count"}
+            />
+          </div>
+        </div>
+      ))}
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() =>
+          setConfig({
+            metrics: [...metrics, { label: "", valuePath: "", aggregate: "count" }],
+          })
+        }
+      >
+        <Plus className="size-4" /> Add metric
+      </Button>
+    </div>
+  );
+}

@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import { auth } from "@/auth";
 import { hasRole } from "@/lib/roles";
+import { SettingsModal } from "@/components/layout/settings-modal";
 
 export default async function SettingsLayout({
   children,
@@ -9,8 +10,9 @@ export default async function SettingsLayout({
   children: React.ReactNode;
 }) {
   const session = await auth();
-  if (!session?.user || !hasRole(session.user.role, "ADMIN")) {
-    redirect("/dashboard");
-  }
-  return <>{children}</>;
+  if (!session?.user) redirect("/login");
+
+  const isAdmin = hasRole(session.user.role, "ADMIN");
+
+  return <SettingsModal isAdmin={isAdmin}>{children}</SettingsModal>;
 }
