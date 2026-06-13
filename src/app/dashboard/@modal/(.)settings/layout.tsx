@@ -12,7 +12,7 @@ export default async function InterceptedSettingsLayout({
   const session = await auth();
   if (!session?.user) redirect("/login");
 
-  const isAdmin = hasRole(session.user.role, "ADMIN");
+  const isAdmin = !!session.user.role && hasRole(session.user.role, "ADMIN");
 
   return <SettingsModal isAdmin={isAdmin}>{children}</SettingsModal>;
 }

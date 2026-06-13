@@ -91,10 +91,10 @@ const RAW_SOURCE: Extract<BlockDataSource, { mode: "raw" }> = {
   rootPath: "",
 };
 
-/** A fresh draft block of the given type. */
+/** A fresh draft block of the given type (no id yet). */
 export function defaultBlockDraft(
   type: BlockType,
-): Omit<BlockDef, "id" | "order"> {
+): Omit<BlockDef, "id"> {
   switch (type) {
     case "TABLE":
       return {

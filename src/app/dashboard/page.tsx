@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { LayoutDashboard, Plug, Users } from "lucide-react";
 
-import { auth } from "@/auth";
+import { getWorkspaceContext } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { DynamicIcon } from "@/lib/icons";
 import {
@@ -13,12 +13,14 @@ import {
 } from "@/components/ui/card";
 
 export default async function DashboardHome() {
-  const session = await auth();
-  const [pageCount, connectionCount, userCount, pages] = await Promise.all([
-    prisma.page.count(),
-    prisma.apiConnection.count(),
-    prisma.user.count(),
+  const ctx = await getWorkspaceContext();
+  const where = { workspaceId: ctx.workspaceId };
+  const [pageCount, connectionCount, memberCount, pages] = await Promise.all([
+    prisma.page.count({ where }),
+    prisma.apiConnection.count({ where }),
+    prisma.membership.count({ where }),
     prisma.page.findMany({
+      where,
       select: { id: true, name: true, slug: true, icon: true },
       orderBy: { name: "asc" },
     }),
@@ -27,14 +29,14 @@ export default async function DashboardHome() {
   const stats = [
     { label: "Pages", value: pageCount, icon: LayoutDashboard },
     { label: "API Connections", value: connectionCount, icon: Plug },
-    { label: "Dashboard Users", value: userCount, icon: Users },
+    { label: "Members", value: memberCount, icon: Users },
   ];
 
   return (
     <div className="space-y-6">
       <div className="gradient-accent overflow-hidden rounded-xl border bg-card p-6">
         <h1 className="text-2xl font-semibold tracking-tight">
-          Welcome back, {session?.user.name?.split(" ")[0]}
+          Welcome back, {ctx.name.split(" ")[0]}
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Here&apos;s an overview of your workspace.

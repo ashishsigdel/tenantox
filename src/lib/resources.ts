@@ -94,10 +94,11 @@ function withEnabledDefaults(
 }
 
 export async function getResourceDef(
+  workspaceId: string,
   slug: string,
 ): Promise<ResourceDef | null> {
   const row = await prisma.resource.findUnique({
-    where: { slug },
+    where: { workspaceId_slug: { workspaceId, slug } },
     include: { fields: true },
   });
   return row ? toResourceDef(row) : null;

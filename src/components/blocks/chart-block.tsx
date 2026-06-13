@@ -33,11 +33,11 @@ const PALETTE = [
   "#06b6d4",
 ];
 
-export function ChartBlock({ block }: { block: BlockDef }) {
+export function ChartBlock({ pageId, block }: { pageId: string; block: BlockDef }) {
   const config = block.config as ChartConfig | null;
   const rootPath =
     block.dataSource?.mode === "raw" ? block.dataSource.rootPath : undefined;
-  const { data, isLoading, isError, error } = useBlockData(block.id);
+  const { data, isLoading, isError, error } = useBlockData(pageId, block.id);
 
   if (!config || !config.series?.length) {
     return (

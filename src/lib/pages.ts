@@ -1,27 +1,19 @@
 import { prisma } from "@/lib/prisma";
-import type {
-  BlockConfig,
-  BlockDataSource,
-  BlockDef,
-  BlockWidth,
-  PageDef,
-} from "@/types/meta";
-import type { Block, Page, Role } from "@prisma/client";
+import { emptyLayout } from "@/types/meta";
+import type { PageDef, PageLayout } from "@/types/meta";
+import type { Page } from "@prisma/client";
 
-/** Narrows a Block row's Json columns to their real types. */
-export function toBlockDef(row: Block): BlockDef {
-  return {
-    id: row.id,
-    type: row.type,
-    order: row.order,
-    width: row.width as BlockWidth,
-    config: (row.config as BlockConfig) ?? null,
-    dataSource: (row.dataSource as BlockDataSource | null) ?? null,
-    visibleToRoles: (row.visibleToRoles as Role[] | null) ?? null,
-  };
+/** Narrows a Page row's `layout` Json column to a real PageLayout. */
+export function toPageLayout(value: unknown): PageLayout {
+  const layout = value as Partial<PageLayout> | null;
+  if (layout && layout.root && Array.isArray(layout.root.children)) {
+    return layout as PageLayout;
+  }
+  // Back-compat / corruption guard: hand back an empty tree.
+  return emptyLayout(crypto.randomUUID());
 }
 
-export function toPageDef(row: Page & { blocks: Block[] }): PageDef {
+export function toPageDef(row: Page): PageDef {
   return {
     id: row.id,
     name: row.name,
@@ -29,17 +21,21 @@ export function toPageDef(row: Page & { blocks: Block[] }): PageDef {
     icon: row.icon,
     description: row.description,
     viewRole: row.viewRole,
-    blocks: row.blocks
-      .slice()
-      .sort((a, b) => a.order - b.order)
-      .map(toBlockDef),
+    layout: toPageLayout(row.layout),
   };
 }
 
-export async function getPageDef(slug: string): Promise<PageDef | null> {
+export async function getPageDef(
+  workspaceId: string,
+  slug: string,
+): Promise<PageDef | null> {
   const row = await prisma.page.findUnique({
-    where: { slug },
-    include: { blocks: true },
+    where: { workspaceId_slug: { workspaceId, slug } },
   });
   return row ? toPageDef(row) : null;
+}
+
+/** Finds a block leaf by id anywhere in a layout tree. */
+export function findBlock(layout: PageLayout, blockId: string) {
+  return layout.root.children.find((b) => b.id === blockId) ?? null;
 }

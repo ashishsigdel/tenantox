@@ -6,11 +6,20 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import {
   logConfigChange,
-  requireRole,
+  requireWorkspaceRole,
   runAction,
   type ActionResult,
 } from "@/server/guard";
 import { Prisma } from "@prisma/client";
+
+/** Throws unless the resource exists in the given workspace. */
+async function assertResourceInWorkspace(resourceId: string, workspaceId: string) {
+  const owned = await prisma.resource.findFirst({
+    where: { id: resourceId, workspaceId },
+    select: { id: true },
+  });
+  if (!owned) throw new Error("Resource not found");
+}
 
 const ROLE = z.enum(["SUPER_ADMIN", "ADMIN", "EDITOR", "VIEWER"]);
 const endpointSchema = z.object({
@@ -72,15 +81,22 @@ export type ResourceInput = z.infer<typeof resourceSchema>;
 
 export async function saveResource(input: ResourceInput): Promise<ActionResult> {
   return runAction(async () => {
-    const session = await requireRole("ADMIN");
+    const { userId, workspaceId } = await requireWorkspaceRole("ADMIN");
     const data = resourceSchema.parse(input);
 
     const existing = await prisma.resource.findUnique({
-      where: { slug: data.slug },
+      where: { workspaceId_slug: { workspaceId, slug: data.slug } },
     });
     if (existing && existing.id !== data.id) {
       throw new Error(`Slug "${data.slug}" is already in use`);
     }
+
+    // Verify the chosen connection belongs to this workspace.
+    const conn = await prisma.apiConnection.findFirst({
+      where: { id: data.apiConnectionId, workspaceId },
+      select: { id: true },
+    });
+    if (!conn) throw new Error("Connection not found");
 
     const payload = {
       name: data.name,
@@ -96,28 +112,44 @@ export async function saveResource(input: ResourceInput): Promise<ActionResult> 
         Prisma.JsonNull) as Prisma.InputJsonValue,
     };
 
-    const saved = data.id
-      ? await prisma.resource.update({ where: { id: data.id }, data: payload })
-      : await prisma.resource.create({ data: payload });
+    let savedId: string;
+    if (data.id) {
+      const result = await prisma.resource.updateMany({
+        where: { id: data.id, workspaceId },
+        data: payload,
+      });
+      if (result.count === 0) throw new Error("Resource not found");
+      savedId = data.id;
+    } else {
+      const created = await prisma.resource.create({
+        data: { ...payload, workspaceId },
+      });
+      savedId = created.id;
+    }
 
-    await logConfigChange(session.user.id, {
+    await logConfigChange(userId, workspaceId, {
       entity: "resource",
-      name: saved.name,
+      name: data.name,
       op: data.id ? "update" : "create",
     });
     revalidatePath("/dashboard/settings/resources");
     revalidatePath("/dashboard", "layout");
-    return { id: saved.id };
+    return { id: savedId };
   });
 }
 
 export async function deleteResource(id: string): Promise<ActionResult> {
   return runAction(async () => {
-    const session = await requireRole("ADMIN");
-    const deleted = await prisma.resource.delete({ where: { id } });
-    await logConfigChange(session.user.id, {
+    const { userId, workspaceId } = await requireWorkspaceRole("ADMIN");
+    const existing = await prisma.resource.findFirst({
+      where: { id, workspaceId },
+      select: { name: true },
+    });
+    if (!existing) throw new Error("Resource not found");
+    await prisma.resource.deleteMany({ where: { id, workspaceId } });
+    await logConfigChange(userId, workspaceId, {
       entity: "resource",
-      name: deleted.name,
+      name: existing.name,
       op: "delete",
     });
     revalidatePath("/dashboard/settings/resources");
@@ -160,8 +192,9 @@ export type FieldInput = z.infer<typeof fieldSchema>;
 
 export async function saveField(input: FieldInput): Promise<ActionResult> {
   return runAction(async () => {
-    const session = await requireRole("ADMIN");
+    const { userId, workspaceId } = await requireWorkspaceRole("ADMIN");
     const data = fieldSchema.parse(input);
+    await assertResourceInWorkspace(data.resourceId, workspaceId);
 
     const duplicate = await prisma.fieldDefinition.findUnique({
       where: { resourceId_key: { resourceId: data.resourceId, key: data.key } },
@@ -223,7 +256,7 @@ export async function saveField(input: FieldInput): Promise<ActionResult> {
       });
     }
 
-    await logConfigChange(session.user.id, {
+    await logConfigChange(userId, workspaceId, {
       entity: "field",
       key: data.key,
       op: data.id ? "update" : "create",
@@ -234,11 +267,16 @@ export async function saveField(input: FieldInput): Promise<ActionResult> {
 
 export async function deleteField(id: string): Promise<ActionResult> {
   return runAction(async () => {
-    const session = await requireRole("ADMIN");
-    const deleted = await prisma.fieldDefinition.delete({ where: { id } });
-    await logConfigChange(session.user.id, {
+    const { userId, workspaceId } = await requireWorkspaceRole("ADMIN");
+    const field = await prisma.fieldDefinition.findFirst({
+      where: { id, resource: { workspaceId } },
+      select: { key: true },
+    });
+    if (!field) throw new Error("Field not found");
+    await prisma.fieldDefinition.delete({ where: { id } });
+    await logConfigChange(userId, workspaceId, {
       entity: "field",
-      key: deleted.key,
+      key: field.key,
       op: "delete",
     });
     revalidatePath("/dashboard/settings/resources");
@@ -252,7 +290,8 @@ export async function reorderFields(
   kind: "form" | "table",
 ): Promise<ActionResult> {
   return runAction(async () => {
-    await requireRole("ADMIN");
+    const { workspaceId } = await requireWorkspaceRole("ADMIN");
+    await assertResourceInWorkspace(resourceId, workspaceId);
     await prisma.$transaction(
       orderedIds.map((id, index) =>
         prisma.fieldDefinition.update({

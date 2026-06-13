@@ -10,9 +10,13 @@ export interface MenuNode {
   children: MenuNode[];
 }
 
-/** Loads the configured menu as a tree, filtered for the given role. */
-export async function getMenuForRole(role: Role): Promise<MenuNode[]> {
+/** Loads a workspace's configured menu as a tree, filtered for the given role. */
+export async function getMenuForRole(
+  workspaceId: string,
+  role: Role,
+): Promise<MenuNode[]> {
   const items = await prisma.menuItem.findMany({
+    where: { workspaceId },
     orderBy: { order: "asc" },
     include: {
       resource: { select: { slug: true } },

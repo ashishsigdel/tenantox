@@ -1,10 +1,13 @@
+import { getWorkspaceContext } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { ConnectionsClient } from "./connections-client";
 
 export const metadata = { title: "API Connections" };
 
 export default async function ConnectionsPage() {
+  const ctx = await getWorkspaceContext();
   const rows = await prisma.apiConnection.findMany({
+    where: { workspaceId: ctx.workspaceId },
     orderBy: { createdAt: "asc" },
     include: { _count: { select: { resources: true } } },
   });

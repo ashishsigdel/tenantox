@@ -1,45 +1,35 @@
-import { redirect } from "next/navigation";
-
-import { auth } from "@/auth";
+import { getWorkspaceContext } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
-import { hasRole } from "@/lib/roles";
 import { UsersClient } from "./users-client";
 
-export const metadata = { title: "Users" };
+export const metadata = { title: "Members" };
 
 export default async function UsersPage() {
-  const session = await auth();
-  if (!session?.user || !hasRole(session.user.role, "SUPER_ADMIN")) {
-    redirect("/dashboard");
-  }
-
-  const users = await prisma.user.findMany({
+  const ctx = await getWorkspaceContext();
+  const memberships = await prisma.membership.findMany({
+    where: { workspaceId: ctx.workspaceId },
+    include: { user: { select: { id: true, name: true, email: true } } },
     orderBy: { createdAt: "asc" },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      role: true,
-      isActive: true,
-      createdAt: true,
-    },
   });
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold">Dashboard Users</h1>
+        <h1 className="text-2xl font-semibold">Members</h1>
         <p className="text-sm text-muted-foreground">
-          People who can sign in to this dashboard and what they&apos;re
-          allowed to do.
+          People who can access this workspace and what they&apos;re allowed to
+          do.
         </p>
       </div>
       <UsersClient
-        users={users.map((u) => ({
-          ...u,
-          createdAt: u.createdAt.toISOString(),
+        members={memberships.map((m) => ({
+          userId: m.user.id,
+          name: m.user.name,
+          email: m.user.email,
+          role: m.role,
+          joinedAt: m.createdAt.toISOString(),
         }))}
-        currentUserId={session.user.id}
+        currentUserId={ctx.userId}
       />
     </div>
   );

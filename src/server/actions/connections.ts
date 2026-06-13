@@ -7,7 +7,7 @@ import { encrypt } from "@/lib/crypto";
 import { prisma } from "@/lib/prisma";
 import {
   logConfigChange,
-  requireRole,
+  requireWorkspaceRole,
   runAction,
   type ActionResult,
 } from "@/server/guard";
@@ -60,7 +60,7 @@ export async function saveConnection(
   input: ConnectionInput,
 ): Promise<ActionResult> {
   return runAction(async () => {
-    const session = await requireRole("ADMIN");
+    const { userId, workspaceId } = await requireWorkspaceRole("ADMIN");
     const data = connectionSchema.parse(input);
     const authConfig = buildAuthConfig(data);
 
@@ -71,35 +71,50 @@ export async function saveConnection(
       ...(authConfig !== undefined && { authConfig }),
     };
 
-    const saved = data.id
-      ? await prisma.apiConnection.update({ where: { id: data.id }, data: base })
-      : await prisma.apiConnection.create({
-          data: { ...base, authConfig: authConfig ?? null },
-        });
+    let savedId: string;
+    if (data.id) {
+      // Ownership-scoped update: only rows in this workspace are touched.
+      const result = await prisma.apiConnection.updateMany({
+        where: { id: data.id, workspaceId },
+        data: base,
+      });
+      if (result.count === 0) throw new Error("Connection not found");
+      savedId = data.id;
+    } else {
+      const created = await prisma.apiConnection.create({
+        data: { ...base, authConfig: authConfig ?? null, workspaceId },
+      });
+      savedId = created.id;
+    }
 
-    await logConfigChange(session.user.id, {
+    await logConfigChange(userId, workspaceId, {
       entity: "connection",
-      name: saved.name,
+      name: data.name,
       op: data.id ? "update" : "create",
     });
     revalidatePath("/dashboard/settings/connections");
-    return { id: saved.id };
+    return { id: savedId };
   });
 }
 
 export async function deleteConnection(id: string): Promise<ActionResult> {
   return runAction(async () => {
-    const session = await requireRole("ADMIN");
+    const { userId, workspaceId } = await requireWorkspaceRole("ADMIN");
     const inUse = await prisma.resource.count({
-      where: { apiConnectionId: id },
+      where: { apiConnectionId: id, workspaceId },
     });
     if (inUse > 0) {
       throw new Error(`Connection is used by ${inUse} resource(s)`);
     }
-    const deleted = await prisma.apiConnection.delete({ where: { id } });
-    await logConfigChange(session.user.id, {
+    const existing = await prisma.apiConnection.findFirst({
+      where: { id, workspaceId },
+      select: { name: true },
+    });
+    if (!existing) throw new Error("Connection not found");
+    await prisma.apiConnection.deleteMany({ where: { id, workspaceId } });
+    await logConfigChange(userId, workspaceId, {
       entity: "connection",
-      name: deleted.name,
+      name: existing.name,
       op: "delete",
     });
     revalidatePath("/dashboard/settings/connections");
@@ -115,7 +130,7 @@ export async function testConnection(input: {
   testPath: string;
 }): Promise<{ ok: boolean; message: string }> {
   try {
-    await requireRole("ADMIN");
+    await requireWorkspaceRole("ADMIN");
     const url = `${input.baseUrl.replace(/\/$/, "")}${input.testPath.startsWith("/") ? input.testPath : `/${input.testPath}`}`;
     const res = await fetch(`${url}?page=1&pageSize=1`, {
       headers: { Accept: "application/json" },

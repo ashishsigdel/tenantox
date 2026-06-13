@@ -21,7 +21,7 @@ function canSee(block: BlockDef, page: PageDef, role: Role): boolean {
 }
 
 /**
- * Server component: lays blocks out in a vertical 6-column grid, resolves the
+ * Server component: lays the page's blocks out in a 6-column grid, resolves the
  * Resource for each Table block, and delegates rendering per block type.
  */
 export async function PageRenderer({
@@ -31,7 +31,7 @@ export async function PageRenderer({
   page: PageDef;
   role: Role;
 }) {
-  const visible = page.blocks.filter((b) => canSee(b, page, role));
+  const visible = page.layout.root.children.filter((b) => canSee(b, page, role));
 
   // Preload the ResourceDef for every Table block.
   const resourceIds = visible
@@ -65,7 +65,12 @@ export async function PageRenderer({
             : null;
         return (
           <div key={block.id} className={cn("min-w-0", WIDTH_CLASS[block.width])}>
-            <BlockRenderer block={block} role={role} resource={resource} />
+            <BlockRenderer
+              pageId={page.id}
+              block={block}
+              role={role}
+              resource={resource}
+            />
           </div>
         );
       })}

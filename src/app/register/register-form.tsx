@@ -1,18 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
-import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { registerUser } from "@/server/actions/auth";
 
-export function LoginForm() {
+export function RegisterForm() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -23,24 +22,64 @@ export function LoginForm() {
     setLoading(true);
 
     const form = new FormData(e.currentTarget);
-    const result = await signIn("credentials", {
-      email: form.get("email"),
-      password: form.get("password"),
-      redirect: false,
+    const email = String(form.get("email"));
+    const password = String(form.get("password"));
+
+    const result = await registerUser({
+      name: String(form.get("name")),
+      email,
+      password,
+      workspaceName: String(form.get("workspaceName") || ""),
     });
 
-    if (result?.error) {
-      setError("Invalid email or password.");
+    if (!result.ok) {
+      setError(result.error);
       setLoading(false);
       return;
     }
 
-    router.push(searchParams.get("callbackUrl") ?? "/dashboard");
+    const signin = await signIn("credentials", {
+      email,
+      password,
+      redirect: false,
+    });
+    if (signin?.error) {
+      // Account created but auto sign-in failed — send them to login.
+      router.push("/login");
+      return;
+    }
+    router.push("/dashboard");
     router.refresh();
   }
 
   return (
     <form onSubmit={onSubmit} className="space-y-4">
+      <div className="space-y-1.5">
+        <Label htmlFor="name" className="text-xs font-medium text-muted-foreground">
+          Full name
+        </Label>
+        <Input
+          id="name"
+          name="name"
+          type="text"
+          placeholder="Ada Lovelace"
+          autoComplete="name"
+          required
+          className="h-11 px-3.5 text-sm"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="workspaceName" className="text-xs font-medium text-muted-foreground">
+          Workspace name <span className="text-muted-foreground/60">(optional)</span>
+        </Label>
+        <Input
+          id="workspaceName"
+          name="workspaceName"
+          type="text"
+          placeholder="Acme Inc."
+          className="h-11 px-3.5 text-sm"
+        />
+      </div>
       <div className="space-y-1.5">
         <Label htmlFor="email" className="text-xs font-medium text-muted-foreground">
           Email
@@ -64,9 +103,10 @@ export function LoginForm() {
             id="password"
             name="password"
             type={showPassword ? "text" : "password"}
-            placeholder="••••••••"
-            autoComplete="current-password"
+            placeholder="At least 8 characters"
+            autoComplete="new-password"
             required
+            minLength={8}
             className="h-11 px-3.5 pr-10 text-sm"
           />
           <button
@@ -91,19 +131,16 @@ export function LoginForm() {
         className="h-11 w-full rounded-xl text-sm"
       >
         {loading && <Loader2 className="size-4 animate-spin" />}
-        Sign in
+        Create account
       </Button>
       <p className="text-center text-sm text-muted-foreground">
-        Need help logging in?{" "}
-        <a href="#" className="font-medium text-foreground underline-offset-4 hover:underline">
-          Reset your password
+        Already have an account?{" "}
+        <a
+          href="/login"
+          className="font-medium text-foreground underline-offset-4 hover:underline"
+        >
+          Sign in
         </a>
-      </p>
-      <p className="text-center text-sm text-muted-foreground">
-        Don&apos;t have an account?{" "}
-        <Link href="/register" className="font-medium text-foreground underline-offset-4 hover:underline">
-          Register
-        </Link>
       </p>
     </form>
   );

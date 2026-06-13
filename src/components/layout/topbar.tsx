@@ -24,15 +24,22 @@ import {
 import { useTheme } from "@/components/theme";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
+import { WorkspaceSwitcher } from "@/components/layout/workspace-switcher";
 
 function titleize(segment: string) {
   return segment.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+type Workspace = { id: string; name: string; slug: string; role: string };
+
 export function Topbar({
   user,
+  workspaces,
+  activeWorkspaceId,
 }: {
-  user: { name?: string | null; email?: string | null; role: string };
+  user: { name?: string | null; email?: string | null; role: string | null };
+  workspaces: Workspace[];
+  activeWorkspaceId: string | null;
 }) {
   const pathname = usePathname();
   const { resolvedTheme, setTheme } = useTheme();
@@ -53,6 +60,11 @@ export function Topbar({
     <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
       <SidebarTrigger />
       <Separator orientation="vertical" className="mr-2 h-4" />
+      <WorkspaceSwitcher
+        workspaces={workspaces}
+        activeWorkspaceId={activeWorkspaceId}
+      />
+      <Separator orientation="vertical" className="mx-1 h-4" />
       <Breadcrumb>
         <BreadcrumbList>
           {segments.map((segment, i) => (
@@ -95,7 +107,7 @@ export function Topbar({
               <div className="text-sm font-medium">{user.name}</div>
               <div className="text-xs text-muted-foreground">{user.email}</div>
               <div className="mt-1 text-xs text-muted-foreground">
-                Role: {user.role}
+                Role: {user.role ?? "—"}
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />

@@ -1,3 +1,4 @@
+import { getWorkspaceContext } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { MenuBuilderClient } from "./menu-builder-client";
 import type { Role } from "@prisma/client";
@@ -5,13 +6,17 @@ import type { Role } from "@prisma/client";
 export const metadata = { title: "Menu Builder" };
 
 export default async function MenuSettingsPage() {
+  const ctx = await getWorkspaceContext();
+  const where = { workspaceId: ctx.workspaceId };
   const [items, resources, pages] = await Promise.all([
-    prisma.menuItem.findMany({ orderBy: { order: "asc" } }),
+    prisma.menuItem.findMany({ where, orderBy: { order: "asc" } }),
     prisma.resource.findMany({
+      where,
       select: { id: true, name: true },
       orderBy: { name: "asc" },
     }),
     prisma.page.findMany({
+      where,
       select: { id: true, name: true },
       orderBy: { name: "asc" },
     }),

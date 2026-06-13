@@ -18,10 +18,10 @@ import { Button } from "@/components/ui/button";
 import { useBlockAction } from "@/lib/data-provider";
 import type { BlockDef, ButtonConfig } from "@/types/meta";
 
-export function ButtonBlock({ block }: { block: BlockDef }) {
+export function ButtonBlock({ pageId, block }: { pageId: string; block: BlockDef }) {
   const config = (block.config as ButtonConfig | null) ?? { label: "Run" };
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const action = useBlockAction(block.id);
+  const action = useBlockAction(pageId, block.id);
 
   const run = () => {
     action.mutate(config.payload, {

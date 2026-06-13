@@ -1,18 +1,17 @@
 import { redirect } from "next/navigation";
 
-import { auth } from "@/auth";
+import { getWorkspaceContext } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { AccountClient } from "./account-client";
 
 export const metadata = { title: "Account" };
 
 export default async function AccountPage() {
-  const session = await auth();
-  if (!session?.user) redirect("/login");
+  const ctx = await getWorkspaceContext();
 
   const user = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: { name: true, email: true, role: true },
+    where: { id: ctx.userId },
+    select: { name: true, email: true },
   });
   if (!user) redirect("/login");
 
@@ -24,7 +23,7 @@ export default async function AccountPage() {
           Your personal profile information.
         </p>
       </div>
-      <AccountClient name={user.name} email={user.email} role={user.role} />
+      <AccountClient name={user.name} email={user.email} role={ctx.role} />
     </div>
   );
 }

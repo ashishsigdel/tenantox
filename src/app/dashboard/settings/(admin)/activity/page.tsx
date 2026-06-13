@@ -1,3 +1,4 @@
+import { getWorkspaceContext } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -20,7 +21,9 @@ const ACTION_COLORS: Record<string, string> = {
 };
 
 export default async function ActivityPage() {
+  const ctx = await getWorkspaceContext();
   const logs = await prisma.activityLog.findMany({
+    where: { workspaceId: ctx.workspaceId },
     orderBy: { createdAt: "desc" },
     take: 200,
     include: { user: { select: { name: true, email: true } } },

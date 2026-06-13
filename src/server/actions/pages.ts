@@ -4,13 +4,23 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { prisma } from "@/lib/prisma";
+import { emptyLayout, type PageLayout } from "@/types/meta";
 import {
   logConfigChange,
-  requireRole,
+  requireWorkspaceRole,
   runAction,
   type ActionResult,
 } from "@/server/guard";
 import { Prisma } from "@prisma/client";
+
+/** Throws unless the page exists in the given workspace. */
+async function assertPageInWorkspace(pageId: string, workspaceId: string) {
+  const owned = await prisma.page.findFirst({
+    where: { id: pageId, workspaceId },
+    select: { id: true },
+  });
+  if (!owned) throw new Error("Page not found");
+}
 
 const ROLE = z.enum(["SUPER_ADMIN", "ADMIN", "EDITOR", "VIEWER"]);
 
@@ -29,10 +39,12 @@ export type PageInput = z.infer<typeof pageSchema>;
 
 export async function savePage(input: PageInput): Promise<ActionResult> {
   return runAction(async () => {
-    const session = await requireRole("ADMIN");
+    const { userId, workspaceId } = await requireWorkspaceRole("ADMIN");
     const data = pageSchema.parse(input);
 
-    const existing = await prisma.page.findUnique({ where: { slug: data.slug } });
+    const existing = await prisma.page.findUnique({
+      where: { workspaceId_slug: { workspaceId, slug: data.slug } },
+    });
     if (existing && existing.id !== data.id) {
       throw new Error(`Slug "${data.slug}" is already in use`);
     }
@@ -45,28 +57,48 @@ export async function savePage(input: PageInput): Promise<ActionResult> {
       viewRole: data.viewRole,
     };
 
-    const saved = data.id
-      ? await prisma.page.update({ where: { id: data.id }, data: payload })
-      : await prisma.page.create({ data: payload });
+    let savedId: string;
+    if (data.id) {
+      const result = await prisma.page.updateMany({
+        where: { id: data.id, workspaceId },
+        data: payload,
+      });
+      if (result.count === 0) throw new Error("Page not found");
+      savedId = data.id;
+    } else {
+      const created = await prisma.page.create({
+        data: {
+          ...payload,
+          workspaceId,
+          layout: emptyLayout(crypto.randomUUID()) as unknown as Prisma.InputJsonValue,
+        },
+      });
+      savedId = created.id;
+    }
 
-    await logConfigChange(session.user.id, {
+    await logConfigChange(userId, workspaceId, {
       entity: "page",
-      name: saved.name,
+      name: data.name,
       op: data.id ? "update" : "create",
     });
     revalidatePath("/dashboard/settings/pages");
     revalidatePath("/dashboard", "layout");
-    return { id: saved.id };
+    return { id: savedId };
   });
 }
 
 export async function deletePage(id: string): Promise<ActionResult> {
   return runAction(async () => {
-    const session = await requireRole("ADMIN");
-    const deleted = await prisma.page.delete({ where: { id } });
-    await logConfigChange(session.user.id, {
+    const { userId, workspaceId } = await requireWorkspaceRole("ADMIN");
+    const existing = await prisma.page.findFirst({
+      where: { id, workspaceId },
+      select: { name: true },
+    });
+    if (!existing) throw new Error("Page not found");
+    await prisma.page.deleteMany({ where: { id, workspaceId } });
+    await logConfigChange(userId, workspaceId, {
       entity: "page",
-      name: deleted.name,
+      name: existing.name,
       op: "delete",
     });
     revalidatePath("/dashboard/settings/pages");
@@ -88,9 +120,8 @@ const dataSourceSchema = z.discriminatedUnion("mode", [
   }),
 ]);
 
-const blockSchema = z.object({
-  id: z.string().optional(),
-  pageId: z.string().min(1),
+const blockNodeSchema = z.object({
+  id: z.string().min(1),
   type: z.enum([
     "TABLE",
     "CHART",
@@ -102,82 +133,42 @@ const blockSchema = z.object({
     "CALLOUT",
   ]),
   width: z.enum(["full", "half", "third"]),
-  config: z.record(z.string(), z.unknown()).nullable().optional(),
-  dataSource: dataSourceSchema.nullable().optional(),
-  visibleToRoles: z.array(ROLE).nullable().optional(),
+  config: z.record(z.string(), z.unknown()).nullable(),
+  dataSource: dataSourceSchema.nullable(),
+  visibleToRoles: z.array(ROLE).nullable(),
 });
 
-export type BlockInput = z.infer<typeof blockSchema>;
+const sectionSchema = z.object({
+  id: z.string().min(1),
+  kind: z.literal("section"),
+  children: z.array(blockNodeSchema),
+});
 
-export async function saveBlock(input: BlockInput): Promise<ActionResult> {
-  return runAction(async () => {
-    const session = await requireRole("ADMIN");
-    const data = blockSchema.parse(input);
+const layoutSchema = z.object({
+  version: z.literal(1),
+  root: sectionSchema,
+});
 
-    const payload = {
-      type: data.type,
-      width: data.width,
-      config: (data.config ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-      dataSource: (data.dataSource ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-      visibleToRoles: (data.visibleToRoles ??
-        Prisma.JsonNull) as Prisma.InputJsonValue,
-    };
+export type LayoutInput = z.infer<typeof layoutSchema>;
 
-    if (data.id) {
-      await prisma.block.update({ where: { id: data.id }, data: payload });
-    } else {
-      const last = await prisma.block.aggregate({
-        where: { pageId: data.pageId },
-        _max: { order: true },
-      });
-      await prisma.block.create({
-        data: {
-          ...payload,
-          pageId: data.pageId,
-          order: (last._max.order ?? -1) + 1,
-        },
-      });
-    }
-
-    await logConfigChange(session.user.id, {
-      entity: "block",
-      type: data.type,
-      op: data.id ? "update" : "create",
-    });
-    revalidatePath("/dashboard/settings/pages");
-    revalidatePath("/dashboard/p", "layout");
-  });
-}
-
-export async function deleteBlock(id: string): Promise<ActionResult> {
-  return runAction(async () => {
-    const session = await requireRole("ADMIN");
-    const deleted = await prisma.block.delete({ where: { id } });
-    await logConfigChange(session.user.id, {
-      entity: "block",
-      type: deleted.type,
-      op: "delete",
-    });
-    revalidatePath("/dashboard/settings/pages");
-    revalidatePath("/dashboard/p", "layout");
-  });
-}
-
-/** Persists a new drag-and-drop ordering for a page's blocks. */
-export async function reorderBlocks(
+/**
+ * Persists a page's whole layout tree in one shot. The builder owns the tree
+ * client-side and autosaves it; this validates and stores it.
+ */
+export async function savePageLayout(
   pageId: string,
-  orderedIds: string[],
+  layout: PageLayout,
 ): Promise<ActionResult> {
   return runAction(async () => {
-    await requireRole("ADMIN");
-    await prisma.$transaction(
-      orderedIds.map((id, index) =>
-        prisma.block.update({
-          where: { id, pageId },
-          data: { order: index },
-        }),
-      ),
-    );
+    const { workspaceId } = await requireWorkspaceRole("ADMIN");
+    await assertPageInWorkspace(pageId, workspaceId);
+    const parsed = layoutSchema.parse(layout);
+
+    await prisma.page.updateMany({
+      where: { id: pageId, workspaceId },
+      data: { layout: parsed as unknown as Prisma.InputJsonValue },
+    });
+
     revalidatePath("/dashboard/settings/pages");
     revalidatePath("/dashboard/p", "layout");
   });

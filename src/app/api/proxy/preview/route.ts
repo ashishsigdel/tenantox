@@ -25,7 +25,9 @@ function fail(message: string, status: number) {
 
 export async function POST(req: NextRequest) {
   const session = await auth();
-  if (!session?.user || !hasRole(session.user.role, "ADMIN")) {
+  const workspaceId = session?.user?.activeWorkspaceId;
+  const role = session?.user?.role;
+  if (!session?.user || !workspaceId || !role || !hasRole(role, "ADMIN")) {
     return fail("Admin access required", 403);
   }
 
@@ -33,8 +35,8 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) return fail("Invalid request", 422);
   const { connectionId, method, path, query, vars } = parsed.data;
 
-  const connection = await prisma.apiConnection.findUnique({
-    where: { id: connectionId },
+  const connection = await prisma.apiConnection.findFirst({
+    where: { id: connectionId, workspaceId },
   });
   if (!connection) return fail("Connection not found", 404);
 

@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
 
+import { getWorkspaceContext } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { toPageLayout } from "@/lib/pages";
 import { Button } from "@/components/ui/button";
 import { WorkspaceTransfer } from "@/components/builder/workspace-transfer";
 import { PagesListClient } from "./pages-list-client";
@@ -9,9 +11,10 @@ import { PagesListClient } from "./pages-list-client";
 export const metadata = { title: "Pages" };
 
 export default async function PagesSettingsPage() {
+  const ctx = await getWorkspaceContext();
   const rows = await prisma.page.findMany({
+    where: { workspaceId: ctx.workspaceId },
     orderBy: { createdAt: "asc" },
-    include: { _count: { select: { blocks: true } } },
   });
 
   return (
@@ -41,7 +44,7 @@ export default async function PagesSettingsPage() {
           slug: row.slug,
           icon: row.icon,
           viewRole: row.viewRole,
-          blockCount: row._count.blocks,
+          blockCount: toPageLayout(row.layout).root.children.length,
         }))}
       />
     </div>

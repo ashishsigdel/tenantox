@@ -63,11 +63,11 @@ const COLS_CLASS: Record<1 | 2 | 3 | 4, string> = {
   4: "grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4",
 };
 
-export function StatBlock({ block }: { block: BlockDef }) {
+export function StatBlock({ pageId, block }: { pageId: string; block: BlockDef }) {
   const config = (block.config as StatConfig | null) ?? { metrics: [] };
   const rootPath =
     block.dataSource?.mode === "raw" ? block.dataSource.rootPath : undefined;
-  const { data, isLoading, isError, error } = useBlockData(block.id);
+  const { data, isLoading, isError, error } = useBlockData(pageId, block.id);
 
   if (isError) {
     return (

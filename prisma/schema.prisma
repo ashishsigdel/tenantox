@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -12,6 +12,11 @@ enum Role {
   ADMIN
   EDITOR
   VIEWER
+}
+
+enum Plan {
+  FREE
+  PRO
 }
 
 enum AuthType {
@@ -69,20 +74,54 @@ enum ActivityAction {
   CONFIG_CHANGE
 }
 
-model User {
-  id           String        @id @default(cuid())
-  email        String        @unique
-  passwordHash String
+/// A tenant. Owns all configuration (connections, resources, pages, menu).
+model Workspace {
+  id           String          @id @default(cuid())
   name         String
-  role         Role          @default(VIEWER)
-  isActive     Boolean       @default(true)
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  slug         String          @unique
+  plan         Plan            @default(FREE)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  memberships  Membership[]
+  connections  ApiConnection[]
+  resources    Resource[]
+  pages        Page[]
+  menuItems    MenuItem[]
   activityLogs ActivityLog[]
+}
+
+/// Join of a user to a workspace, carrying the per-workspace role.
+model Membership {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  role        Role      @default(VIEWER)
+  createdAt   DateTime  @default(now())
+
+  @@unique([userId, workspaceId])
+  @@index([workspaceId])
+}
+
+model User {
+  id              String        @id @default(cuid())
+  email           String        @unique
+  passwordHash    String
+  name            String
+  /// SaaS-operator flag (support/superadmin console); NOT a tenant role.
+  isPlatformAdmin Boolean       @default(false)
+  isActive        Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  memberships     Membership[]
+  activityLogs    ActivityLog[]
 }
 
 model ApiConnection {
   id             String     @id @default(cuid())
+  workspaceId    String
+  workspace      Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   name           String
   baseUrl        String
   authType       AuthType   @default(NONE)
@@ -92,99 +131,97 @@ model ApiConnection {
   createdAt      DateTime   @default(now())
   updatedAt      DateTime   @updatedAt
   resources      Resource[]
+
+  @@index([workspaceId])
 }
 
 model Resource {
-  id              String          @id @default(cuid())
+  id              String            @id @default(cuid())
+  workspaceId     String
+  workspace       Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   name            String
-  slug            String          @unique
+  slug            String
   icon            String?
   apiConnectionId String
-  apiConnection   ApiConnection   @relation(fields: [apiConnectionId], references: [id], onDelete: Restrict)
+  apiConnection   ApiConnection     @relation(fields: [apiConnectionId], references: [id], onDelete: Restrict)
   // { list: {method,path}, getOne: {...}, create: {...}, update: {...}, delete: {...} }
   endpoints       Json
-  primaryKeyField String          @default("id")
-  titleField      String          @default("name")
+  primaryKeyField String            @default("id")
+  titleField      String            @default("name")
   // { create: bool, update: bool, delete: bool, view: bool }
   capabilities    Json
   // { create: Role, update: Role, delete: Role, view: Role } — minimum role per operation
   permissions     Json
   // { request: {pageParam,...,filterStyle}, response: {dataPath,totalPath,successPath,errorPath} }
   apiMapping      Json?
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
   fields          FieldDefinition[]
   menuItems       MenuItem[]
+
+  @@unique([workspaceId, slug])
+  @@index([workspaceId])
 }
 
 model Page {
   id          String     @id @default(cuid())
+  workspaceId String
+  workspace   Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   name        String
-  slug        String     @unique
+  slug        String
   icon        String?
   description String?
   // Minimum role required to view the page.
   viewRole    Role       @default(VIEWER)
-  blocks      Block[]
+  // The page layout tree: { version, root: { id, kind:"section", children: BlockDef[] } }.
+  layout      Json
   menuItems   MenuItem[]
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
-}
 
-model Block {
-  id         String    @id @default(cuid())
-  pageId     String
-  page       Page      @relation(fields: [pageId], references: [id], onDelete: Cascade)
-  type       BlockType
-  order      Int       @default(0)
-  width      String    @default("full") // full | half | third
-  // Type-specific config: title, chart type, axis map, text/markdown, metrics[], button action, ...
-  config     Json?
-  // Data binding: { mode:"resource", resourceId } | { mode:"raw", connectionId, method, path, rootPath?, query? }
-  dataSource Json?
-  // JSON array of roles allowed to see this block; null = inherit page.viewRole.
-  visibleToRoles Json?
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
+  @@unique([workspaceId, slug])
+  @@index([workspaceId])
 }
 
 model FieldDefinition {
-  id          String    @id @default(cuid())
-  resourceId  String
-  resource    Resource  @relation(fields: [resourceId], references: [id], onDelete: Cascade)
-  key         String
-  label       String
-  type        FieldType
-  order       Int       @default(0)
+  id            String    @id @default(cuid())
+  resourceId    String
+  resource      Resource  @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  key           String
+  label         String
+  type          FieldType
+  order         Int       @default(0)
   // Type-specific config: options, optionsSource, relation, min/max, accept, ...
-  config      Json?
+  config        Json?
   // { required: bool, minLength, maxLength, pattern, min, max, messages: {...} }
-  validation  Json?
+  validation    Json?
   // Form settings
-  showInForm  Boolean   @default(true)
-  placeholder String?
-  helpText    String?
-  defaultValue String?
-  readOnly    Boolean   @default(false)
-  width       String    @default("full") // full | half | third
+  showInForm    Boolean   @default(true)
+  placeholder   String?
+  helpText      String?
+  defaultValue  String?
+  readOnly      Boolean   @default(false)
+  width         String    @default("full") // full | half | third
   // { field, operator: eq|neq|in|truthy, value } — show only when condition matches
-  visibleIf   Json?
+  visibleIf     Json?
   // Table settings
-  showInTable Boolean   @default(true)
-  sortable    Boolean   @default(false)
-  filterable  Boolean   @default(false)
-  tableOrder  Int       @default(0)
-  format      String    @default("text") // text|badge|date|datetime|currency|boolean-icon|image-thumb|truncate|link
+  showInTable   Boolean   @default(true)
+  sortable      Boolean   @default(false)
+  filterable    Boolean   @default(false)
+  tableOrder    Int       @default(0)
+  format        String    @default("text") // text|badge|date|datetime|currency|boolean-icon|image-thumb|truncate|link
   // { value: color } for badge format
   badgeColorMap Json?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   @@unique([resourceId, key])
 }
 
 model MenuItem {
   id             String       @id @default(cuid())
+  workspaceId    String
+  workspace      Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   label          String
   icon           String?
   order          Int          @default(0)
@@ -201,10 +238,14 @@ model MenuItem {
   visibleToRoles Json?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
+
+  @@index([workspaceId])
 }
 
 model ActivityLog {
   id           String         @id @default(cuid())
+  workspaceId  String?
+  workspace    Workspace?     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   userId       String
   user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   action       ActivityAction
@@ -212,4 +253,6 @@ model ActivityLog {
   recordId     String?
   detail       Json?
   createdAt    DateTime       @default(now())
+
+  @@index([workspaceId])
 }

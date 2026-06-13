@@ -301,11 +301,14 @@ export type BlockConfig =
   | CalloutConfig
   | null;
 
-/** A Block row with JSON columns narrowed to real types. */
+/**
+ * A block leaf in the page layout tree. `id` is a client-generated uuid that is
+ * stable for the life of the block — the data gateway references a block by
+ * (pageId, id), never by a DB row.
+ */
 export interface BlockDef {
   id: string;
   type: BlockType;
-  order: number;
   width: BlockWidth;
   config: BlockConfig;
   dataSource: BlockDataSource | null;
@@ -313,7 +316,28 @@ export interface BlockDef {
   visibleToRoles: Role[] | null;
 }
 
-/** A Page row with JSON columns narrowed, plus its ordered blocks. */
+/**
+ * A layout container. Phase 1 uses a single implicit root section holding a flat
+ * list of blocks; nesting/columns arrive in Phase 2 (children → LayoutNode[]).
+ */
+export interface SectionDef {
+  id: string;
+  kind: "section";
+  children: BlockDef[];
+}
+
+/** The whole page layout, stored as JSON on Page.layout. */
+export interface PageLayout {
+  version: 1;
+  root: SectionDef;
+}
+
+/** A fresh, empty layout for a new page. */
+export function emptyLayout(rootId: string): PageLayout {
+  return { version: 1, root: { id: rootId, kind: "section", children: [] } };
+}
+
+/** A Page row with JSON columns narrowed, plus its layout tree. */
 export interface PageDef {
   id: string;
   name: string;
@@ -321,5 +345,5 @@ export interface PageDef {
   icon: string | null;
   description: string | null;
   viewRole: Role;
-  blocks: BlockDef[];
+  layout: PageLayout;
 }

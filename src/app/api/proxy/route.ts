@@ -63,7 +63,9 @@ function envelopeError(
 
 export async function POST(req: NextRequest) {
   const session = await auth();
-  if (!session?.user) {
+  const workspaceId = session?.user?.activeWorkspaceId;
+  const role = session?.user?.role;
+  if (!session?.user || !workspaceId || !role) {
     return envelopeError("UNAUTHORIZED", "Not authenticated", 401);
   }
 
@@ -74,7 +76,7 @@ export async function POST(req: NextRequest) {
   const { resourceSlug, operation, id, query, payload } = parsed.data;
 
   const row = await prisma.resource.findUnique({
-    where: { slug: resourceSlug },
+    where: { workspaceId_slug: { workspaceId, slug: resourceSlug } },
     include: { fields: true, apiConnection: true },
   });
   if (!row) {
@@ -92,7 +94,7 @@ export async function POST(req: NextRequest) {
     );
   }
   const minRole: Role = resource.permissions[permission] ?? "SUPER_ADMIN";
-  if (!hasRole(session.user.role, minRole)) {
+  if (!hasRole(role, minRole)) {
     return envelopeError(
       "FORBIDDEN",
       `Requires ${minRole} role or higher`,
@@ -192,6 +194,7 @@ export async function POST(req: NextRequest) {
     await prisma.activityLog.create({
       data: {
         userId: session.user.id,
+        workspaceId,
         action,
         resourceSlug,
         recordId: String(

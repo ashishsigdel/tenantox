@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ExternalLink } from "lucide-react";
 
+import { getWorkspaceContext } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { toPageDef } from "@/lib/pages";
 import { Button } from "@/components/ui/button";
@@ -23,14 +24,18 @@ export default async function PageBuilderPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const ctx = await getWorkspaceContext();
+  const where = { workspaceId: ctx.workspaceId };
 
   const [row, connections, resources] = await Promise.all([
-    prisma.page.findUnique({ where: { id }, include: { blocks: true } }),
+    prisma.page.findFirst({ where: { id, ...where } }),
     prisma.apiConnection.findMany({
+      where,
       select: { id: true, name: true },
       orderBy: { name: "asc" },
     }),
     prisma.resource.findMany({
+      where,
       select: { id: true, name: true, slug: true },
       orderBy: { name: "asc" },
     }),
@@ -66,7 +71,7 @@ export default async function PageBuilderPage({
       <Tabs defaultValue="builder">
         <TabsList>
           <TabsTrigger value="builder">
-            Builder ({page.blocks.length})
+            Builder ({page.layout.root.children.length})
           </TabsTrigger>
           <TabsTrigger value="settings">Settings</TabsTrigger>
         </TabsList>
@@ -74,7 +79,7 @@ export default async function PageBuilderPage({
         <TabsContent value="builder" className="pt-4">
           <PageBuilderClient
             pageId={page.id}
-            blocks={page.blocks}
+            layout={page.layout}
             connections={connections}
             resources={resources}
           />

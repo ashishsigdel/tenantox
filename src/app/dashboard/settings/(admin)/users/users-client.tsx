@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { Loader2, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -15,7 +15,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -33,7 +32,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import {
   Table,
   TableBody,
@@ -43,49 +41,43 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ROLES } from "@/lib/roles";
-import { deleteUser, saveUser, type UserInput } from "@/server/actions/users";
+import {
+  addMember,
+  removeMember,
+  updateMemberRole,
+} from "@/server/actions/users";
 import type { Role } from "@prisma/client";
 
-interface UserRow {
-  id: string;
+interface MemberRow {
+  userId: string;
   name: string;
   email: string;
-  role: Role;
-  isActive: boolean;
-  createdAt: string;
+  role: string;
+  joinedAt: string;
 }
 
-const EMPTY: UserInput = {
-  name: "",
-  email: "",
-  role: "VIEWER",
-  isActive: true,
-  password: "",
-};
-
 export function UsersClient({
-  users,
+  members,
   currentUserId,
 }: {
-  users: UserRow[];
+  members: MemberRow[];
   currentUserId: string;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [draft, setDraft] = useState<UserInput>(EMPTY);
-  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState<Role>("VIEWER");
+  const [removeId, setRemoveId] = useState<string | null>(null);
 
-  function set<K extends keyof UserInput>(key: K, value: UserInput[K]) {
-    setDraft((d) => ({ ...d, [key]: value }));
-  }
-
-  function submit() {
+  function submitAdd() {
     startTransition(async () => {
-      const result = await saveUser(draft);
+      const result = await addMember({ email, role });
       if (result.ok) {
-        toast.success(draft.id ? "User updated" : "User created");
-        setDialogOpen(false);
+        toast.success("Member added");
+        setAddOpen(false);
+        setEmail("");
+        setRole("VIEWER");
         router.refresh();
       } else {
         toast.error(result.error);
@@ -93,14 +85,26 @@ export function UsersClient({
     });
   }
 
-  function confirmDelete() {
-    if (!deleteId) return;
-    const id = deleteId;
-    setDeleteId(null);
+  function changeRole(userId: string, nextRole: Role) {
     startTransition(async () => {
-      const result = await deleteUser(id);
+      const result = await updateMemberRole({ targetUserId: userId, role: nextRole });
       if (result.ok) {
-        toast.success("User deleted");
+        toast.success("Role updated");
+        router.refresh();
+      } else {
+        toast.error(result.error);
+      }
+    });
+  }
+
+  function confirmRemove() {
+    if (!removeId) return;
+    const id = removeId;
+    setRemoveId(null);
+    startTransition(async () => {
+      const result = await removeMember(id);
+      if (result.ok) {
+        toast.success("Member removed");
         router.refresh();
       } else {
         toast.error(result.error);
@@ -111,14 +115,8 @@ export function UsersClient({
   return (
     <div className="space-y-4">
       <div className="flex justify-end">
-        <Button
-          size="sm"
-          onClick={() => {
-            setDraft(EMPTY);
-            setDialogOpen(true);
-          }}
-        >
-          <Plus className="size-4" /> New user
+        <Button size="sm" onClick={() => setAddOpen(true)}>
+          <Plus className="size-4" /> Add member
         </Button>
       </div>
 
@@ -129,64 +127,49 @@ export function UsersClient({
               <TableHead>Name</TableHead>
               <TableHead>Email</TableHead>
               <TableHead>Role</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="w-24" />
+              <TableHead className="w-16" />
             </TableRow>
           </TableHeader>
           <TableBody>
-            {users.map((user) => (
-              <TableRow key={user.id}>
+            {members.map((member) => (
+              <TableRow key={member.userId}>
                 <TableCell className="font-medium">
-                  {user.name}
-                  {user.id === currentUserId && (
+                  {member.name}
+                  {member.userId === currentUserId && (
                     <span className="ml-2 text-xs text-muted-foreground">
                       (you)
                     </span>
                   )}
                 </TableCell>
-                <TableCell>{user.email}</TableCell>
+                <TableCell>{member.email}</TableCell>
                 <TableCell>
-                  <Badge variant="secondary">{user.role}</Badge>
+                  <Select
+                    value={member.role}
+                    onValueChange={(v) => changeRole(member.userId, v as Role)}
+                    disabled={pending}
+                  >
+                    <SelectTrigger className="h-8 w-36">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ROLES.map((r) => (
+                        <SelectItem key={r} value={r}>
+                          {r}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </TableCell>
                 <TableCell>
-                  {user.isActive ? (
-                    <Badge className="bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300">
-                      Active
-                    </Badge>
-                  ) : (
-                    <Badge variant="secondary">Disabled</Badge>
-                  )}
-                </TableCell>
-                <TableCell>
-                  <div className="flex justify-end gap-1">
+                  <div className="flex justify-end">
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="size-8"
-                      onClick={() => {
-                        setDraft({
-                          id: user.id,
-                          name: user.name,
-                          email: user.email,
-                          role: user.role,
-                          isActive: user.isActive,
-                          password: "",
-                        });
-                        setDialogOpen(true);
-                      }}
+                      className="size-8 text-destructive"
+                      onClick={() => setRemoveId(member.userId)}
                     >
-                      <Pencil className="size-4" />
+                      <Trash2 className="size-4" />
                     </Button>
-                    {user.id !== currentUserId && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-8 text-destructive"
-                        onClick={() => setDeleteId(user.id)}
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
-                    )}
                   </div>
                 </TableCell>
               </TableRow>
@@ -195,96 +178,71 @@ export function UsersClient({
         </Table>
       </div>
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{draft.id ? "Edit user" : "New user"}</DialogTitle>
+            <DialogTitle>Add member</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>Name</Label>
-              <Input
-                value={draft.name}
-                onChange={(e) => set("name", e.target.value)}
-              />
-            </div>
             <div className="space-y-2">
               <Label>Email</Label>
               <Input
                 type="email"
-                value={draft.email}
-                onChange={(e) => set("email", e.target.value)}
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="teammate@company.com"
               />
-            </div>
-            <div className="grid grid-cols-2 items-end gap-3">
-              <div className="space-y-2">
-                <Label>Role</Label>
-                <Select
-                  value={draft.role}
-                  onValueChange={(v) => set("role", v as Role)}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {ROLES.map((role) => (
-                      <SelectItem key={role} value={role}>
-                        {role}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <label className="flex items-center gap-2 pb-2 text-sm">
-                <Switch
-                  checked={draft.isActive}
-                  onCheckedChange={(v) => set("isActive", v)}
-                />
-                Active
-              </label>
+              <p className="text-xs text-muted-foreground">
+                They must already have an account. Ask them to sign up first.
+              </p>
             </div>
             <div className="space-y-2">
-              <Label>
-                {draft.id ? "New password (optional)" : "Password"}
-              </Label>
-              <Input
-                type="password"
-                value={draft.password ?? ""}
-                onChange={(e) => set("password", e.target.value)}
-                placeholder={draft.id ? "Leave blank to keep current" : "Min 8 characters"}
-              />
+              <Label>Role</Label>
+              <Select value={role} onValueChange={(v) => setRole(v as Role)}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ROLES.map((r) => (
+                    <SelectItem key={r} value={r}>
+                      {r}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>
+            <Button variant="outline" onClick={() => setAddOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={submit} disabled={pending}>
+            <Button onClick={submitAdd} disabled={pending || !email}>
               {pending && <Loader2 className="size-4 animate-spin" />}
-              {draft.id ? "Save" : "Create"}
+              Add
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       <AlertDialog
-        open={deleteId !== null}
-        onOpenChange={(open) => !open && setDeleteId(null)}
+        open={removeId !== null}
+        onOpenChange={(open) => !open && setRemoveId(null)}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete user?</AlertDialogTitle>
+            <AlertDialogTitle>Remove member?</AlertDialogTitle>
             <AlertDialogDescription>
-              They will no longer be able to sign in. This cannot be undone.
+              They will lose access to this workspace. Their account is not
+              deleted.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={confirmDelete}
+              onClick={confirmRemove}
               className="bg-destructive text-white hover:bg-destructive/90"
             >
-              Delete
+              Remove
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

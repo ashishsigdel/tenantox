@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 
+import { getWorkspaceContext } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { toResourceDef } from "@/lib/resources";
 import {
@@ -24,17 +25,21 @@ export default async function ResourceBuilderPage({
 }) {
   const { id } = await params;
   const { tab } = await searchParams;
+  const ctx = await getWorkspaceContext();
+  const where = { workspaceId: ctx.workspaceId };
 
   const [row, connections, allResources] = await Promise.all([
-    prisma.resource.findUnique({
-      where: { id },
+    prisma.resource.findFirst({
+      where: { id, ...where },
       include: { fields: true },
     }),
     prisma.apiConnection.findMany({
+      where,
       select: { id: true, name: true },
       orderBy: { name: "asc" },
     }),
     prisma.resource.findMany({
+      where,
       select: { slug: true, name: true },
       orderBy: { name: "asc" },
     }),

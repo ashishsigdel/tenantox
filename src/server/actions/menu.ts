@@ -6,7 +6,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import {
   logConfigChange,
-  requireRole,
+  requireWorkspaceRole,
   runAction,
   type ActionResult,
 } from "@/server/guard";
@@ -30,7 +30,7 @@ export type MenuItemInput = z.infer<typeof menuItemSchema>;
 
 export async function saveMenuItem(input: MenuItemInput): Promise<ActionResult> {
   return runAction(async () => {
-    const session = await requireRole("ADMIN");
+    const { userId, workspaceId } = await requireWorkspaceRole("ADMIN");
     const data = menuItemSchema.parse(input);
 
     if (data.type === "RESOURCE" && !data.resourceId) {
@@ -57,18 +57,22 @@ export async function saveMenuItem(input: MenuItemInput): Promise<ActionResult> 
     };
 
     if (data.id) {
-      await prisma.menuItem.update({ where: { id: data.id }, data: payload });
+      const result = await prisma.menuItem.updateMany({
+        where: { id: data.id, workspaceId },
+        data: payload,
+      });
+      if (result.count === 0) throw new Error("Menu item not found");
     } else {
       const last = await prisma.menuItem.aggregate({
-        where: { parentId: data.parentId ?? null },
+        where: { workspaceId, parentId: data.parentId ?? null },
         _max: { order: true },
       });
       await prisma.menuItem.create({
-        data: { ...payload, order: (last._max.order ?? -1) + 1 },
+        data: { ...payload, workspaceId, order: (last._max.order ?? -1) + 1 },
       });
     }
 
-    await logConfigChange(session.user.id, {
+    await logConfigChange(userId, workspaceId, {
       entity: "menu",
       label: data.label,
       op: data.id ? "update" : "create",
@@ -79,11 +83,16 @@ export async function saveMenuItem(input: MenuItemInput): Promise<ActionResult> 
 
 export async function deleteMenuItem(id: string): Promise<ActionResult> {
   return runAction(async () => {
-    const session = await requireRole("ADMIN");
-    const deleted = await prisma.menuItem.delete({ where: { id } });
-    await logConfigChange(session.user.id, {
+    const { userId, workspaceId } = await requireWorkspaceRole("ADMIN");
+    const existing = await prisma.menuItem.findFirst({
+      where: { id, workspaceId },
+      select: { label: true },
+    });
+    if (!existing) throw new Error("Menu item not found");
+    await prisma.menuItem.deleteMany({ where: { id, workspaceId } });
+    await logConfigChange(userId, workspaceId, {
       entity: "menu",
-      label: deleted.label,
+      label: existing.label,
       op: "delete",
     });
     revalidatePath("/dashboard", "layout");
@@ -95,12 +104,12 @@ export async function reorderMenu(
   groups: { parentId: string | null; orderedIds: string[] }[],
 ): Promise<ActionResult> {
   return runAction(async () => {
-    await requireRole("ADMIN");
+    const { workspaceId } = await requireWorkspaceRole("ADMIN");
     await prisma.$transaction(
       groups.flatMap((group) =>
         group.orderedIds.map((id, index) =>
-          prisma.menuItem.update({
-            where: { id },
+          prisma.menuItem.updateMany({
+            where: { id, workspaceId },
             data: { order: index, parentId: group.parentId },
           }),
         ),

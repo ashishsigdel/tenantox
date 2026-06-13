@@ -143,24 +143,28 @@ async function callBlockEndpoint(
   return json.data;
 }
 
-/** Fetches a block's data by id; the request shape is resolved server-side. */
+/**
+ * Fetches a block's data by (pageId, nodeId); the request shape is resolved
+ * server-side from the stored layout, so the browser can't aim it anywhere.
+ */
 export function useBlockData(
-  blockId: string,
+  pageId: string,
+  nodeId: string,
   vars?: Record<string, string>,
   enabled = true,
 ) {
   return useQuery({
-    queryKey: ["block-data", blockId, vars],
-    queryFn: () => callBlockEndpoint("/api/proxy/block", { blockId, vars }),
-    enabled: enabled && !!blockId,
+    queryKey: ["block-data", pageId, nodeId, vars],
+    queryFn: () => callBlockEndpoint("/api/proxy/block", { pageId, nodeId, vars }),
+    enabled: enabled && !!pageId && !!nodeId,
   });
 }
 
 /** Fires a block's action (POST/PUT/DELETE) on demand, e.g. a button click. */
-export function useBlockAction(blockId: string) {
+export function useBlockAction(pageId: string, nodeId: string) {
   return useMutation({
     mutationFn: (payload?: Record<string, unknown>) =>
-      callBlockEndpoint("/api/proxy/block", { blockId, payload }),
+      callBlockEndpoint("/api/proxy/block", { pageId, nodeId, payload }),
   });
 }
 

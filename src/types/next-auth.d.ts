@@ -5,18 +5,18 @@ declare module "next-auth" {
   interface Session {
     user: {
       id: string;
-      role: Role;
+      /** Workspace the user is currently acting in; null = no membership. */
+      activeWorkspaceId: string | null;
+      /** Role within the active workspace; null = no membership. */
+      role: Role | null;
     } & DefaultSession["user"];
-  }
-
-  interface User {
-    role: Role;
   }
 }
 
 declare module "next-auth/jwt" {
   interface JWT {
     id: string;
-    role: Role;
+    activeWorkspaceId: string | null;
+    role: Role | null;
   }
 }

@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import { Loader2, Plus, Play, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -26,7 +25,6 @@ import {
 } from "@/components/ui/sheet";
 import { ROLES } from "@/lib/roles";
 import { usePreviewSource } from "@/lib/data-provider";
-import { saveBlock } from "@/server/actions/pages";
 import type {
   BlockDataSource,
   BlockDef,
@@ -50,22 +48,21 @@ const METHODS: HttpMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 export function BlockEditorSheet({
   open,
   onOpenChange,
-  pageId,
   block,
   newType,
   connections,
   resources,
+  onSave,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  pageId: string;
   block: BlockDef | null;
   newType: BlockType | null;
   connections: Connection[];
   resources: ResourceOption[];
+  /** Receives the edited draft (without id); the parent owns the layout tree. */
+  onSave: (draft: Draft) => void;
 }) {
-  const router = useRouter();
-  const [pending, startTransition] = useTransition();
   const [draft, setDraft] = useState<Draft>(defaultBlockDraft("TEXT"));
   const preview = usePreviewSource();
   const [previewText, setPreviewText] = useState<string | null>(null);
@@ -133,24 +130,14 @@ export function BlockEditorSheet({
   }
 
   function submit() {
-    startTransition(async () => {
-      const result = await saveBlock({
-        id: block?.id,
-        pageId,
-        type,
-        width: draft.width,
-        config: draft.config as Record<string, unknown> | null,
-        dataSource: draft.dataSource ?? null,
-        visibleToRoles: draft.visibleToRoles,
-      });
-      if (result.ok) {
-        toast.success(block ? "Block saved" : "Block added");
-        onOpenChange(false);
-        router.refresh();
-      } else {
-        toast.error(result.error);
-      }
+    onSave({
+      type,
+      width: draft.width,
+      config: draft.config,
+      dataSource: draft.dataSource ?? null,
+      visibleToRoles: draft.visibleToRoles,
     });
+    onOpenChange(false);
   }
 
   return (
@@ -310,6 +297,10 @@ export function BlockEditorSheet({
                   />
                 </Field>
               )}
+              <QueryParamsEditor
+                query={raw.query ?? {}}
+                onChange={(query) => setRaw({ query })}
+              />
               <Button
                 type="button"
                 variant="outline"
@@ -353,6 +344,23 @@ export function BlockEditorSheet({
                   value={(config.label as string) ?? ""}
                   onChange={(e) => setConfig({ label: e.target.value })}
                 />
+              </Field>
+              <Field label="Style">
+                <Select
+                  value={(config.variant as string) ?? "default"}
+                  onValueChange={(v) => setConfig({ variant: v })}
+                >
+                  <SelectTrigger className="w-40">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {["default", "secondary", "destructive", "outline"].map((v) => (
+                      <SelectItem key={v} value={v}>
+                        {v}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </Field>
               <Field label="Confirm message (optional)">
                 <Input
@@ -412,10 +420,7 @@ export function BlockEditorSheet({
         </div>
 
         <SheetFooter>
-          <Button onClick={submit} disabled={pending}>
-            {pending && <Loader2 className="size-4 animate-spin" />}
-            {block ? "Save block" : "Add block"}
-          </Button>
+          <Button onClick={submit}>{block ? "Save block" : "Add block"}</Button>
         </SheetFooter>
       </SheetContent>
     </Sheet>
@@ -434,6 +439,64 @@ function Field({
       <Label>{label}</Label>
       {children}
     </div>
+  );
+}
+
+/** Editable key/value list for a raw source's static query params. */
+function QueryParamsEditor({
+  query,
+  onChange,
+}: {
+  query: Record<string, string>;
+  onChange: (next: Record<string, string> | undefined) => void;
+}) {
+  const entries = Object.entries(query);
+
+  function setEntry(index: number, key: string, value: string) {
+    const next = entries.map((e, i) => (i === index ? [key, value] : e));
+    onChange(Object.fromEntries(next.filter(([k]) => k !== "")));
+  }
+  function add() {
+    onChange({ ...query, "": "" });
+  }
+  function remove(index: number) {
+    const next = entries.filter((_, i) => i !== index);
+    const obj = Object.fromEntries(next);
+    onChange(Object.keys(obj).length ? obj : undefined);
+  }
+
+  return (
+    <Field label="Query params (optional)">
+      <div className="space-y-2">
+        {entries.map(([k, v], i) => (
+          <div key={i} className="flex gap-2">
+            <Input
+              className="h-8 font-mono text-xs"
+              value={k}
+              onChange={(e) => setEntry(i, e.target.value, v)}
+              placeholder="key"
+            />
+            <Input
+              className="h-8 font-mono text-xs"
+              value={v}
+              onChange={(e) => setEntry(i, k, e.target.value)}
+              placeholder="value or {{var}}"
+            />
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 text-destructive"
+              onClick={() => remove(i)}
+            >
+              <Trash2 className="size-4" />
+            </Button>
+          </div>
+        ))}
+        <Button variant="outline" size="sm" onClick={add}>
+          <Plus className="size-4" /> Add param
+        </Button>
+      </div>
+    </Field>
   );
 }
 
@@ -499,6 +562,13 @@ function ChartConfigEditor({
               value={s.yPath}
               onChange={(e) => update(i, { yPath: e.target.value })}
               placeholder="value path"
+            />
+            <input
+              type="color"
+              aria-label="Series color"
+              className="h-8 w-9 shrink-0 cursor-pointer rounded border bg-background p-0.5"
+              value={s.color || "#6366f1"}
+              onChange={(e) => update(i, { color: e.target.value })}
             />
             <Button
               variant="ghost"
@@ -610,6 +680,31 @@ function StatConfigEditor({
               onChange={(e) => update(i, { valuePath: e.target.value })}
               placeholder="value path"
               disabled={m.aggregate === "count"}
+            />
+          </div>
+          <div className="flex gap-2">
+            <Select
+              value={m.format ?? "text"}
+              onValueChange={(v) =>
+                update(i, { format: v as (typeof metrics)[number]["format"] })
+              }
+            >
+              <SelectTrigger size="sm" className="w-32">
+                <SelectValue placeholder="format" />
+              </SelectTrigger>
+              <SelectContent>
+                {["text", "currency", "date", "datetime"].map((f) => (
+                  <SelectItem key={f} value={f}>
+                    {f}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Input
+              className="h-8"
+              value={m.icon ?? ""}
+              onChange={(e) => update(i, { icon: e.target.value || undefined })}
+              placeholder="icon (lucide, optional)"
             />
           </div>
         </div>

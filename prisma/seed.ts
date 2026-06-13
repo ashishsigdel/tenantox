@@ -15,20 +15,35 @@ async function main() {
     create: {
       email,
       name,
-      role: "SUPER_ADMIN",
       passwordHash: await bcrypt.hash(password, 10),
     },
   });
-  console.log(`✔ Super admin: ${admin.email}`);
+  console.log(`✔ User: ${admin.email}`);
+
+  // --- Demo workspace + owner membership ---
+  const workspace = await prisma.workspace.upsert({
+    where: { slug: "demo" },
+    update: {},
+    create: { name: "Demo Workspace", slug: "demo" },
+  });
+  await prisma.membership.upsert({
+    where: {
+      userId_workspaceId: { userId: admin.id, workspaceId: workspace.id },
+    },
+    update: { role: "SUPER_ADMIN" },
+    create: { userId: admin.id, workspaceId: workspace.id, role: "SUPER_ADMIN" },
+  });
+  console.log(`✔ Workspace: ${workspace.name} (owner ${admin.email})`);
 
   // --- Demo connection → bundled mock API ---
   const appUrl = process.env.APP_URL ?? "http://localhost:3000";
   let connection = await prisma.apiConnection.findFirst({
-    where: { name: "Demo Mock API" },
+    where: { workspaceId: workspace.id, name: "Demo Mock API" },
   });
   if (!connection) {
     connection = await prisma.apiConnection.create({
       data: {
+        workspaceId: workspace.id,
         name: "Demo Mock API",
         baseUrl: `${appUrl}/api/mock`,
         authType: "NONE",
@@ -39,7 +54,7 @@ async function main() {
 
   // --- Demo "Products" resource ---
   const existing = await prisma.resource.findUnique({
-    where: { slug: "products" },
+    where: { workspaceId_slug: { workspaceId: workspace.id, slug: "products" } },
   });
   if (existing) {
     console.log("✔ Products resource already seeded");
@@ -48,6 +63,7 @@ async function main() {
 
   const products = await prisma.resource.create({
     data: {
+      workspaceId: workspace.id,
       name: "Products",
       slug: "products",
       icon: "package",
@@ -207,6 +223,7 @@ async function main() {
   // --- Menu ---
   await prisma.menuItem.create({
     data: {
+      workspaceId: workspace.id,
       label: "Overview",
       icon: "layout-dashboard",
       type: "LINK",
@@ -215,10 +232,11 @@ async function main() {
     },
   });
   const group = await prisma.menuItem.create({
-    data: { label: "Catalog", type: "GROUP", order: 1 },
+    data: { workspaceId: workspace.id, label: "Catalog", type: "GROUP", order: 1 },
   });
   await prisma.menuItem.create({
     data: {
+      workspaceId: workspace.id,
       label: "Products",
       icon: "package",
       type: "RESOURCE",

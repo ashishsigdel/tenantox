@@ -16,10 +16,12 @@ import { Markdown } from "./markdown";
 
 /** Maps a block definition to its rendered output. */
 export function BlockRenderer({
+  pageId,
   block,
   role,
   resource,
 }: {
+  pageId: string;
   block: BlockDef;
   role: Role;
   resource: ResourceDef | null;
@@ -33,13 +35,13 @@ export function BlockRenderer({
       );
 
     case "CHART":
-      return <ChartBlock block={block} />;
+      return <ChartBlock pageId={pageId} block={block} />;
 
     case "STAT":
-      return <StatBlock block={block} />;
+      return <StatBlock pageId={pageId} block={block} />;
 
     case "BUTTON":
-      return <ButtonBlock block={block} />;
+      return <ButtonBlock pageId={pageId} block={block} />;
 
     case "HEADING": {
       const cfg = (block.config as HeadingConfig | null) ?? {

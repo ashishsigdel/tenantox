@@ -9,7 +9,7 @@ export default async function InterceptedAdminSettingsLayout({
   children: React.ReactNode;
 }) {
   const session = await auth();
-  if (!session?.user || !hasRole(session.user.role, "ADMIN")) {
+  if (!session?.user || !session.user.role || !hasRole(session.user.role, "ADMIN")) {
     redirect("/dashboard/settings");
   }
   return <>{children}</>;

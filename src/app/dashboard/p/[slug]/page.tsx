@@ -1,6 +1,6 @@
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 
-import { auth } from "@/auth";
+import { getWorkspaceContext } from "@/lib/session";
 import { getPageDef } from "@/lib/pages";
 import { hasRole } from "@/lib/roles";
 import { DynamicIcon } from "@/lib/icons";
@@ -11,14 +11,13 @@ export default async function CustomPage({
 }: {
   params: Promise<{ slug: string }>;
 }) {
-  const session = await auth();
-  if (!session?.user) redirect("/login");
+  const ctx = await getWorkspaceContext();
 
   const { slug } = await params;
-  const page = await getPageDef(slug);
+  const page = await getPageDef(ctx.workspaceId, slug);
   if (!page) notFound();
 
-  if (!hasRole(session.user.role, page.viewRole)) {
+  if (!hasRole(ctx.role, page.viewRole)) {
     return (
       <div className="flex h-64 items-center justify-center text-muted-foreground">
         You don&apos;t have permission to view this page.
@@ -43,7 +42,7 @@ export default async function CustomPage({
         ) : null}
       </div>
 
-      <PageRenderer page={page} role={session.user.role} />
+      <PageRenderer page={page} role={ctx.role} />
     </div>
   );
 }

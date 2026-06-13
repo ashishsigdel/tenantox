@@ -4,7 +4,12 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { prisma } from "@/lib/prisma";
-import { logConfigChange, requireRole, runAction, type ActionResult } from "@/server/guard";
+import {
+  logConfigChange,
+  requireWorkspaceRole,
+  runAction,
+  type ActionResult,
+} from "@/server/guard";
 import { Prisma } from "@prisma/client";
 
 /**
@@ -13,15 +18,20 @@ import { Prisma } from "@prisma/client";
  */
 
 export async function exportWorkspace(): Promise<string> {
-  await requireRole("ADMIN");
+  const { workspaceId } = await requireWorkspaceRole("ADMIN");
 
   const [connections, resources, menuItems] = await Promise.all([
-    prisma.apiConnection.findMany({ orderBy: { createdAt: "asc" } }),
+    prisma.apiConnection.findMany({
+      where: { workspaceId },
+      orderBy: { createdAt: "asc" },
+    }),
     prisma.resource.findMany({
+      where: { workspaceId },
       include: { fields: true, apiConnection: { select: { name: true } } },
       orderBy: { createdAt: "asc" },
     }),
     prisma.menuItem.findMany({
+      where: { workspaceId },
       orderBy: { order: "asc" },
       include: { resource: { select: { slug: true } } },
     }),
@@ -108,7 +118,7 @@ const importSchema = z.object({
 
 export async function importWorkspace(json: string): Promise<ActionResult> {
   return runAction(async () => {
-    const session = await requireRole("SUPER_ADMIN");
+    const { userId, workspaceId } = await requireWorkspaceRole("SUPER_ADMIN");
 
     let parsed: z.infer<typeof importSchema>;
     try {
@@ -117,22 +127,22 @@ export async function importWorkspace(json: string): Promise<ActionResult> {
       throw new Error("Not a valid workspace export file");
     }
 
-    // Connections: upsert by name (secrets must be re-entered afterwards).
+    // Connections: upsert by name within this workspace (secrets re-entered after).
     const connectionIds = new Map<string, string>();
     for (const conn of parsed.connections) {
       const existing = await prisma.apiConnection.findFirst({
-        where: { name: conn.name },
+        where: { workspaceId, name: conn.name },
       });
       const saved = existing
         ? await prisma.apiConnection.update({
             where: { id: existing.id },
             data: { baseUrl: conn.baseUrl, authType: conn.authType },
           })
-        : await prisma.apiConnection.create({ data: conn });
+        : await prisma.apiConnection.create({ data: { ...conn, workspaceId } });
       connectionIds.set(conn.name, saved.id);
     }
 
-    // Resources: upsert by slug; fields are replaced wholesale.
+    // Resources: upsert by (workspace, slug); fields are replaced wholesale.
     for (const res of parsed.resources) {
       const connectionId = connectionIds.get(res.connectionName);
       if (!connectionId) continue;
@@ -148,11 +158,11 @@ export async function importWorkspace(json: string): Promise<ActionResult> {
         permissions: res.permissions as Prisma.InputJsonValue,
       };
       const existing = await prisma.resource.findUnique({
-        where: { slug: res.slug },
+        where: { workspaceId_slug: { workspaceId, slug: res.slug } },
       });
       const saved = existing
         ? await prisma.resource.update({ where: { id: existing.id }, data })
-        : await prisma.resource.create({ data });
+        : await prisma.resource.create({ data: { ...data, workspaceId } });
 
       await prisma.fieldDefinition.deleteMany({
         where: { resourceId: saved.id },
@@ -167,17 +177,18 @@ export async function importWorkspace(json: string): Promise<ActionResult> {
       }
     }
 
-    // Menu: replace wholesale (config-only, safe to rebuild).
-    await prisma.menuItem.deleteMany({});
+    // Menu: replace this workspace's menu wholesale (config-only, safe to rebuild).
+    await prisma.menuItem.deleteMany({ where: { workspaceId } });
     const parentIds = new Map<string, string>();
     for (const item of parsed.menu.filter((m) => !m.parentLabel)) {
       const resource = item.resourceSlug
         ? await prisma.resource.findUnique({
-            where: { slug: item.resourceSlug },
+            where: { workspaceId_slug: { workspaceId, slug: item.resourceSlug } },
           })
         : null;
       const created = await prisma.menuItem.create({
         data: {
+          workspaceId,
           label: item.label,
           icon: item.icon,
           type: item.type,
@@ -192,11 +203,12 @@ export async function importWorkspace(json: string): Promise<ActionResult> {
     for (const item of parsed.menu.filter((m) => m.parentLabel)) {
       const resource = item.resourceSlug
         ? await prisma.resource.findUnique({
-            where: { slug: item.resourceSlug },
+            where: { workspaceId_slug: { workspaceId, slug: item.resourceSlug } },
           })
         : null;
       await prisma.menuItem.create({
         data: {
+          workspaceId,
           label: item.label,
           icon: item.icon,
           type: item.type,
@@ -209,7 +221,7 @@ export async function importWorkspace(json: string): Promise<ActionResult> {
       });
     }
 
-    await logConfigChange(session.user.id, {
+    await logConfigChange(userId, workspaceId, {
       entity: "workspace",
       op: "import",
       resources: parsed.resources.length,
