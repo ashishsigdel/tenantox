@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/sheet";
 import { ROLES } from "@/lib/roles";
 import { usePreviewSource } from "@/lib/data-provider";
+import { getArray, getPath } from "@/lib/json-path";
 import type {
   BlockDataSource,
   BlockDef,
@@ -40,6 +41,7 @@ import type {
 import type { BlockType, Role } from "@prisma/client";
 
 import { blockTypeMeta, defaultBlockDraft, defaultGroupDraft } from "./block-types";
+import { PathField } from "./path-picker";
 import { TableSourceEditor } from "./table-source-editor";
 
 type Connection = { id: string; name: string };
@@ -83,6 +85,8 @@ export function BlockEditorSheet({
   );
   const preview = usePreviewSource();
   const [previewText, setPreviewText] = useState<string | null>(null);
+  // Parsed Test response, used to drive the visual path pickers.
+  const [previewData, setPreviewData] = useState<unknown>(null);
 
   const isGroup = target?.mode === "group";
   const inGroup = target?.mode === "block" ? target.inGroup : false;
@@ -90,6 +94,7 @@ export function BlockEditorSheet({
   useEffect(() => {
     if (!open || !target) return;
     setPreviewText(null);
+    setPreviewData(null);
     if (target.mode === "group") {
       setGroupDraft(
         target.group
@@ -148,6 +153,18 @@ export function BlockEditorSheet({
       : null;
   const groupRoot = ds?.mode === "group" ? ds.rootPath ?? "" : "";
 
+  // Samples for the visual path pickers, derived from the last Test response.
+  // `objectSample` is the node at the block's root/section path; `rowSample` is
+  // the shape of one row when that node is an array (per-row X/Y/value paths).
+  const currentRootPath = isGroupChildData ? groupRoot : raw?.rootPath ?? "";
+  const objectSample =
+    previewData != null ? getPath(previewData, currentRootPath) : null;
+  const rowSample = (() => {
+    if (previewData == null) return null;
+    const arr = getArray(previewData, currentRootPath);
+    return arr.length ? arr[0] : objectSample;
+  })();
+
   function setConfig(patch: Record<string, unknown>) {
     setBlockDraft((d) => ({ ...d, config: { ...(d.config ?? {}), ...patch } }));
   }
@@ -189,8 +206,10 @@ export function BlockEditorSheet({
     preview.mutate(
       { connectionId: src.connectionId, method: src.method, path: src.path, query: src.query },
       {
-        onSuccess: (data) =>
-          setPreviewText(JSON.stringify(data, null, 2).slice(0, 4000)),
+        onSuccess: (data) => {
+          setPreviewData(data);
+          setPreviewText(JSON.stringify(data, null, 2).slice(0, 4000));
+        },
         onError: (e) => toast.error((e as Error).message),
       },
     );
@@ -427,11 +446,12 @@ export function BlockEditorSheet({
                     response.
                   </p>
                   <Field label="Section path">
-                    <Input
-                      className="font-mono text-xs"
+                    <PathField
+                      sample={previewData}
                       value={groupRoot}
-                      onChange={(e) => setGroupRoot(e.target.value)}
+                      onChange={setGroupRoot}
                       placeholder="data.stats"
+                      arrayExpected={type === "CHART" || type === "TABLE"}
                     />
                   </Field>
                   <Button
@@ -498,11 +518,12 @@ export function BlockEditorSheet({
                   </div>
                   {type !== "BUTTON" && (
                     <Field label="Root path (to the array/object)">
-                      <Input
-                        className="font-mono text-xs"
+                      <PathField
+                        sample={previewData}
                         value={raw.rootPath ?? ""}
-                        onChange={(e) => setRaw({ rootPath: e.target.value })}
+                        onChange={(rootPath) => setRaw({ rootPath })}
                         placeholder="data.items"
+                        arrayExpected={type === "CHART" || type === "TABLE"}
                       />
                     </Field>
                   )}
@@ -532,6 +553,7 @@ export function BlockEditorSheet({
                 <ChartConfigEditor
                   config={config as unknown as ChartConfig}
                   setConfig={setConfig}
+                  rowSample={rowSample}
                 />
               )}
 
@@ -539,6 +561,8 @@ export function BlockEditorSheet({
                 <StatConfigEditor
                   config={config as unknown as StatConfig}
                   setConfig={setConfig}
+                  rowSample={rowSample}
+                  objectSample={objectSample}
                 />
               )}
 
@@ -721,9 +745,12 @@ function QueryParamsEditor({
 function ChartConfigEditor({
   config,
   setConfig,
+  rowSample,
 }: {
   config: ChartConfig;
   setConfig: (patch: Record<string, unknown>) => void;
+  /** Shape of one row (an element of the section/root array), for X/Y pickers. */
+  rowSample: unknown;
 }) {
   const series = config.series ?? [];
   const update = (i: number, patch: Partial<(typeof series)[number]>) =>
@@ -738,66 +765,66 @@ function ChartConfigEditor({
           onChange={(e) => setConfig({ title: e.target.value })}
         />
       </Field>
-      <div className="flex gap-3">
-        <Field label="Type">
-          <Select
-            value={config.chartType ?? "bar"}
-            onValueChange={(v) => setConfig({ chartType: v })}
-          >
-            <SelectTrigger className="w-32">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {["line", "bar", "area", "pie", "donut"].map((t) => (
-                <SelectItem key={t} value={t}>
-                  {t}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-        <Field label="X path (per row)">
-          <Input
-            className="font-mono text-xs"
-            value={config.xPath ?? ""}
-            onChange={(e) => setConfig({ xPath: e.target.value })}
-            placeholder="month"
-          />
-        </Field>
-      </div>
+      <Field label="Type">
+        <Select
+          value={config.chartType ?? "bar"}
+          onValueChange={(v) => setConfig({ chartType: v })}
+        >
+          <SelectTrigger className="w-32">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {["line", "bar", "area", "pie", "donut"].map((t) => (
+              <SelectItem key={t} value={t}>
+                {t}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </Field>
+      <Field label="X path (category per row)">
+        <PathField
+          sample={rowSample}
+          value={config.xPath ?? ""}
+          onChange={(xPath) => setConfig({ xPath })}
+          placeholder="month"
+        />
+      </Field>
       <div className="space-y-2">
         <Label>Series</Label>
         {series.map((s, i) => (
-          <div key={i} className="flex gap-2">
-            <Input
-              className="h-8"
-              value={s.label}
-              onChange={(e) => update(i, { label: e.target.value })}
-              placeholder="Label"
-            />
-            <Input
-              className="h-8 font-mono text-xs"
+          <div key={i} className="space-y-2 rounded border p-2">
+            <div className="flex gap-2">
+              <Input
+                className="h-8"
+                value={s.label}
+                onChange={(e) => update(i, { label: e.target.value })}
+                placeholder="Label (shown in legend)"
+              />
+              <input
+                type="color"
+                aria-label="Series color"
+                className="h-8 w-9 shrink-0 cursor-pointer rounded border bg-background p-0.5"
+                value={s.color || "#6366f1"}
+                onChange={(e) => update(i, { color: e.target.value })}
+              />
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8 text-destructive"
+                onClick={() =>
+                  setConfig({ series: series.filter((_, j) => j !== i) })
+                }
+              >
+                <Trash2 className="size-4" />
+              </Button>
+            </div>
+            <PathField
+              sample={rowSample}
               value={s.yPath}
-              onChange={(e) => update(i, { yPath: e.target.value })}
-              placeholder="value path"
+              onChange={(yPath) => update(i, { yPath })}
+              placeholder="value path (per row)"
             />
-            <input
-              type="color"
-              aria-label="Series color"
-              className="h-8 w-9 shrink-0 cursor-pointer rounded border bg-background p-0.5"
-              value={s.color || "#6366f1"}
-              onChange={(e) => update(i, { color: e.target.value })}
-            />
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-8 text-destructive"
-              onClick={() =>
-                setConfig({ series: series.filter((_, j) => j !== i) })
-              }
-            >
-              <Trash2 className="size-4" />
-            </Button>
           </div>
         ))}
         <Button
@@ -817,9 +844,15 @@ function ChartConfigEditor({
 function StatConfigEditor({
   config,
   setConfig,
+  rowSample,
+  objectSample,
 }: {
   config: StatConfig;
   setConfig: (patch: Record<string, unknown>) => void;
+  /** Row shape (array element) for count/sum/avg/min/max metrics. */
+  rowSample: unknown;
+  /** Object at the root path, for `raw` metrics that read a single value. */
+  objectSample: unknown;
 }) {
   const metrics = config.metrics ?? [];
   const update = (i: number, patch: Partial<(typeof metrics)[number]>) =>
@@ -892,13 +925,23 @@ function StatConfigEditor({
                 ))}
               </SelectContent>
             </Select>
-            <Input
-              className="h-8 font-mono text-xs"
-              value={m.valuePath}
-              onChange={(e) => update(i, { valuePath: e.target.value })}
-              placeholder="value path"
-              disabled={m.aggregate === "count"}
-            />
+            {m.aggregate === "count" ? (
+              <Input
+                className="h-8 font-mono text-xs"
+                value=""
+                placeholder="counts rows — no path"
+                disabled
+              />
+            ) : (
+              <div className="flex-1">
+                <PathField
+                  sample={m.aggregate === "raw" ? objectSample : rowSample}
+                  value={m.valuePath}
+                  onChange={(valuePath) => update(i, { valuePath })}
+                  placeholder="value path"
+                />
+              </div>
+            )}
           </div>
           <div className="flex gap-2">
             <Select

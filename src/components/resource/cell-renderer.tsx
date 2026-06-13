@@ -1,9 +1,90 @@
 "use client";
 
+import { useState } from "react";
 import { Check, ExternalLink, ImageOff, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import type { FieldDef } from "@/types/meta";
+
+/**
+ * Returns a higher-resolution variant of an image URL when the host supports
+ * it. Google user content (lh3.googleusercontent.com etc.) encodes the size in
+ * a trailing directive like `=s96-c` / `=w96-h96`; we bump it to `=s1024` for a
+ * crisp preview. Other hosts are returned unchanged.
+ */
+function upscaleImageUrl(src: string, size = 1024): string {
+  if (!/googleusercontent\.com/.test(src)) return src;
+  // Replace an existing size directive, or append one if none is present.
+  return /=[swh]\d/.test(src)
+    ? src.replace(/=[^=]*$/, `=s${size}`)
+    : `${src}=s${size}`;
+}
+
+/** Avatar/thumbnail cell. Sends no `Referer` so hotlink-protected hosts (which
+ * 403 cross-origin embeds) still load, falls back to a clean placeholder
+ * instead of the browser's broken-image glyph when a fetch genuinely fails,
+ * and opens a zoomed preview (upscaled, when supported) on click. */
+function ImageThumb({ src }: { src: string }) {
+  const [failed, setFailed] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [bigSrc, setBigSrc] = useState(() => upscaleImageUrl(src));
+
+  if (failed) {
+    return (
+      <div
+        className="flex size-9 items-center justify-center rounded-md border bg-muted"
+        title={src}
+      >
+        <ImageOff className="size-4 text-muted-foreground" />
+      </div>
+    );
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <button
+        type="button"
+        aria-label="View image"
+        className="block cursor-zoom-in rounded-md"
+        onClick={(e) => {
+          // Don't trigger the row's own click (e.g. open/edit).
+          e.stopPropagation();
+          setOpen(true);
+        }}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={src}
+          alt=""
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          className="size-9 rounded-md border object-cover"
+          onError={() => setFailed(true)}
+        />
+      </button>
+      <DialogContent className="max-w-[90vw] sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="sr-only">Image preview</DialogTitle>
+        </DialogHeader>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={bigSrc}
+          alt=""
+          referrerPolicy="no-referrer"
+          className="mx-auto max-h-[80vh] w-auto rounded-md object-contain"
+          // If the upscaled variant fails, fall back to the original URL.
+          onError={() => bigSrc !== src && setBigSrc(src)}
+        />
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 const BADGE_COLORS: Record<string, string> = {
   green:
@@ -76,13 +157,9 @@ export function CellRenderer({
         <X className="size-4 text-muted-foreground" />
       );
     case "image-thumb":
-      return typeof value === "string" && value.startsWith("http") ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={value}
-          alt=""
-          className="size-9 rounded-md border object-cover"
-        />
+      return typeof value === "string" &&
+        /^(https?:)?\/\//.test(value.trim()) ? (
+        <ImageThumb src={value.trim()} />
       ) : (
         <ImageOff className="size-4 text-muted-foreground" />
       );

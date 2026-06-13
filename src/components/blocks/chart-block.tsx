@@ -21,7 +21,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useBlockData } from "@/lib/data-provider";
-import { getArray, getPath, toNumber } from "@/lib/json-path";
+import { getPath, toNumber } from "@/lib/json-path";
 import type { BlockDef, ChartConfig } from "@/types/meta";
 
 import { useGroupData } from "./group-block";
@@ -57,15 +57,31 @@ export function ChartBlock({ pageId, block }: { pageId: string; block: BlockDef 
     );
   }
 
-  const rows = getArray(data, rootPath).map((row, i) => {
-    const point: Record<string, unknown> = {
-      __x: getPath(row, config.xPath) ?? i,
-    };
-    config.series.forEach((s) => {
-      point[s.label] = toNumber(getPath(row, s.yPath)) ?? 0;
-    });
-    return point;
-  });
+  // Two shapes are supported:
+  //  • Array mode — the root path is a JSON list; render one point per element,
+  //    with each series a column read via its yPath (keyed by index, since
+  //    labels may be empty or duplicated).
+  //  • Scalar mode — the root path is a single object (e.g. a KPI snapshot with
+  //    no array anywhere); render one point per series, the series label as the
+  //    category and its yPath resolved against that object.
+  const rootValue = getPath(data, rootPath);
+  const scalar = !Array.isArray(rootValue);
+
+  const rows: Record<string, unknown>[] = scalar
+    ? config.series.map((s, si) => ({
+        __x: s.label || `Series ${si + 1}`,
+        value: toNumber(getPath(rootValue, s.yPath)) ?? 0,
+        __fill: s.color || PALETTE[si % PALETTE.length],
+      }))
+    : (rootValue as unknown[]).map((row, i) => {
+        const point: Record<string, unknown> = {
+          __x: getPath(row, config.xPath) ?? i,
+        };
+        config.series.forEach((s, si) => {
+          point[`s${si}`] = toNumber(getPath(row, s.yPath)) ?? 0;
+        });
+        return point;
+      });
 
   return (
     <Card>
@@ -83,7 +99,7 @@ export function ChartBlock({ pageId, block }: { pageId: string; block: BlockDef 
           </p>
         ) : (
           <ResponsiveContainer width="100%" height={280}>
-            {renderChart(config, rows)}
+            {renderChart(config, rows, scalar)}
           </ResponsiveContainer>
         )}
       </CardContent>
@@ -94,26 +110,26 @@ export function ChartBlock({ pageId, block }: { pageId: string; block: BlockDef 
 function renderChart(
   config: ChartConfig,
   rows: Record<string, unknown>[],
+  scalar: boolean,
 ): React.ReactElement {
   const color = (i: number, fallback?: string) =>
     fallback || PALETTE[i % PALETTE.length];
 
   if (config.chartType === "pie" || config.chartType === "donut") {
-    const s = config.series[0];
     return (
       <PieChart>
         <Tooltip />
         <Legend />
         <Pie
           data={rows}
-          dataKey={s.label}
+          dataKey={scalar ? "value" : "s0"}
           nameKey="__x"
           innerRadius={config.chartType === "donut" ? 60 : 0}
           outerRadius={100}
           label
         >
-          {rows.map((_, i) => (
-            <Cell key={i} fill={color(i)} />
+          {rows.map((row, i) => (
+            <Cell key={i} fill={(scalar && (row.__fill as string)) || color(i)} />
           ))}
         </Pie>
       </PieChart>
@@ -127,10 +143,27 @@ function renderChart(
         <XAxis dataKey="__x" fontSize={12} />
         <YAxis fontSize={12} />
         <Tooltip />
-        <Legend />
-        {config.series.map((s, i) => (
-          <Bar key={s.label} dataKey={s.label} fill={color(i, s.color)} radius={[4, 4, 0, 0]} />
-        ))}
+        {scalar ? (
+          // Each bar is labelled on the X axis, so no legend is needed.
+          <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+            {rows.map((row, i) => (
+              <Cell key={i} fill={(row.__fill as string) || color(i)} />
+            ))}
+          </Bar>
+        ) : (
+          <>
+            <Legend />
+            {config.series.map((s, i) => (
+              <Bar
+                key={i}
+                dataKey={`s${i}`}
+                name={s.label || `Series ${i + 1}`}
+                fill={color(i, s.color)}
+                radius={[4, 4, 0, 0]}
+              />
+            ))}
+          </>
+        )}
       </BarChart>
     );
   }
@@ -143,16 +176,28 @@ function renderChart(
         <YAxis fontSize={12} />
         <Tooltip />
         <Legend />
-        {config.series.map((s, i) => (
+        {scalar ? (
           <Area
-            key={s.label}
             type="monotone"
-            dataKey={s.label}
-            stroke={color(i, s.color)}
-            fill={color(i, s.color)}
+            dataKey="value"
+            name={config.title || "Value"}
+            stroke={color(0)}
+            fill={color(0)}
             fillOpacity={0.2}
           />
-        ))}
+        ) : (
+          config.series.map((s, i) => (
+            <Area
+              key={i}
+              type="monotone"
+              dataKey={`s${i}`}
+              name={s.label || `Series ${i + 1}`}
+              stroke={color(i, s.color)}
+              fill={color(i, s.color)}
+              fillOpacity={0.2}
+            />
+          ))
+        )}
       </AreaChart>
     );
   }
@@ -164,16 +209,28 @@ function renderChart(
       <YAxis fontSize={12} />
       <Tooltip />
       <Legend />
-      {config.series.map((s, i) => (
+      {scalar ? (
         <Line
-          key={s.label}
           type="monotone"
-          dataKey={s.label}
-          stroke={color(i, s.color)}
+          dataKey="value"
+          name={config.title || "Value"}
+          stroke={color(0)}
           strokeWidth={2}
-          dot={false}
+          dot
         />
-      ))}
+      ) : (
+        config.series.map((s, i) => (
+          <Line
+            key={i}
+            type="monotone"
+            dataKey={`s${i}`}
+            name={s.label || `Series ${i + 1}`}
+            stroke={color(i, s.color)}
+            strokeWidth={2}
+            dot={false}
+          />
+        ))
+      )}
     </LineChart>
   );
 }

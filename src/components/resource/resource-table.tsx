@@ -81,6 +81,7 @@ import {
   useRecordList,
 } from "@/lib/data-provider";
 import { hasRole } from "@/lib/roles";
+import { getPath } from "@/lib/json-path";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import type { DataRecord } from "@/types/api";
 import type { FieldDef, ResourceDef } from "@/types/meta";
@@ -260,7 +261,9 @@ export function ResourceTable({
       },
       ...tableFields.map<ColumnDef<DataRecord>>((field) => ({
         id: field.key,
-        accessorKey: field.key,
+        // getPath supports dotted keys (e.g. "user.profilePic"), so a column
+        // can map to a nested value, not just a top-level property.
+        accessorFn: (row) => getPath(row, field.key),
         header: () =>
           field.sortable ? (
             <Button
@@ -290,14 +293,14 @@ export function ResourceTable({
             field.label
           ),
         cell: ({ row }) => (
-          <CellRenderer field={field} value={row.original[field.key]} />
+          <CellRenderer field={field} value={getPath(row.original, field.key)} />
         ),
       })),
       {
         id: "__actions",
         enableHiding: false,
         cell: ({ row }) => {
-          const id = row.original[pk] as string | number;
+          const id = getPath(row.original, pk) as string | number;
           return (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -354,7 +357,7 @@ export function ResourceTable({
     state: { rowSelection, columnVisibility },
     onRowSelectionChange: setRowSelection,
     onColumnVisibilityChange: setColumnVisibility,
-    getRowId: (row, index) => String(row[pk] ?? index),
+    getRowId: (row, index) => String(getPath(row, pk) ?? index),
   });
 
   const selectedIds = Object.keys(rowSelection).filter(
@@ -553,7 +556,7 @@ export function ResourceTable({
                   data-state={row.getIsSelected() && "selected"}
                   className={can.view ? "cursor-pointer" : undefined}
                   onClick={() =>
-                    can.view && setDetailId(String(row.original[pk]))
+                    can.view && setDetailId(String(getPath(row.original, pk)))
                   }
                 >
                   {row.getVisibleCells().map((cell) => (

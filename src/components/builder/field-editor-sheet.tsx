@@ -35,17 +35,48 @@ import type {
 import type { FieldType } from "@prisma/client";
 
 const FIELD_TYPES: FieldType[] = [
-  "TEXT", "TEXTAREA", "RICH_TEXT", "NUMBER", "BOOLEAN", "DATE", "DATETIME",
-  "SELECT", "MULTI_SELECT", "RADIO", "EMAIL", "URL", "PASSWORD", "FILE",
-  "IMAGE", "JSON", "RELATION", "COLOR", "SLUG",
+  "TEXT",
+  "TEXTAREA",
+  "RICH_TEXT",
+  "NUMBER",
+  "BOOLEAN",
+  "DATE",
+  "DATETIME",
+  "SELECT",
+  "MULTI_SELECT",
+  "RADIO",
+  "EMAIL",
+  "URL",
+  "PASSWORD",
+  "FILE",
+  "IMAGE",
+  "JSON",
+  "RELATION",
+  "COLOR",
+  "SLUG",
 ];
 
 const FORMATS: CellFormat[] = [
-  "text", "badge", "date", "datetime", "currency", "boolean-icon",
-  "image-thumb", "truncate", "link",
+  "text",
+  "badge",
+  "date",
+  "datetime",
+  "currency",
+  "boolean-icon",
+  "image-thumb",
+  "truncate",
+  "link",
 ];
 
-const BADGE_COLORS = ["green", "yellow", "red", "blue", "purple", "orange", "gray"];
+const BADGE_COLORS = [
+  "green",
+  "yellow",
+  "red",
+  "blue",
+  "purple",
+  "orange",
+  "gray",
+];
 
 const OPTION_TYPES: FieldType[] = ["SELECT", "MULTI_SELECT", "RADIO"];
 
@@ -161,7 +192,11 @@ function toFieldInput(
       labelField: draft.relationLabelField || "name",
     };
   }
-  if (OPTION_TYPES.includes(draft.type) && draft.options.length === 0 && draft.relationSlug) {
+  if (
+    OPTION_TYPES.includes(draft.type) &&
+    draft.options.length === 0 &&
+    draft.relationSlug
+  ) {
     config.optionsSource = {
       resourceSlug: draft.relationSlug,
       valueField: draft.relationValueField || "id",
@@ -250,7 +285,9 @@ export function FieldEditorSheet({
 
   function submit() {
     startTransition(async () => {
-      const result = await saveField(toFieldInput(draft, resourceId, field?.id));
+      const result = await saveField(
+        toFieldInput(draft, resourceId, field?.id),
+      );
       if (result.ok) {
         toast.success(field ? "Field saved" : "Field added");
         onOpenChange(false);
@@ -269,7 +306,9 @@ export function FieldEditorSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="flex w-full flex-col sm:max-w-lg">
         <SheetHeader>
-          <SheetTitle>{field ? `Edit field: ${field.label}` : "Add field"}</SheetTitle>
+          <SheetTitle>
+            {field ? `Edit field: ${field.label}` : "Add field"}
+          </SheetTitle>
           <SheetDescription>
             One definition drives both the form input and the table column.
           </SheetDescription>
@@ -412,7 +451,10 @@ export function FieldEditorSheet({
                     variant="outline"
                     size="sm"
                     onClick={() =>
-                      set("options", [...draft.options, { label: "", value: "" }])
+                      set("options", [
+                        ...draft.options,
+                        { label: "", value: "" },
+                      ])
                     }
                   >
                     <Plus className="size-3.5" /> Add option
@@ -616,7 +658,9 @@ export function FieldEditorSheet({
                 className="h-8"
                 value={draft.visibleIfValue}
                 onChange={(e) => set("visibleIfValue", e.target.value)}
-                disabled={!draft.visibleIfField || draft.visibleIfOperator === "truthy"}
+                disabled={
+                  !draft.visibleIfField || draft.visibleIfOperator === "truthy"
+                }
               />
             </div>
           </div>

@@ -162,7 +162,10 @@ const fieldSchema = z.object({
   resourceId: z.string().min(1),
   key: z
     .string()
-    .regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/, "Must be a valid JSON property name"),
+    .regex(
+      /^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$/,
+      "Must be a JSON property name, optionally dotted for nested values (e.g. user.profilePic)",
+    ),
   label: z.string().min(1, "Label is required"),
   type: z.enum([
     "TEXT", "TEXTAREA", "RICH_TEXT", "NUMBER", "BOOLEAN", "DATE", "DATETIME",

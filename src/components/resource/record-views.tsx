@@ -27,6 +27,7 @@ import {
   useRecord,
 } from "@/lib/data-provider";
 import { hasRole } from "@/lib/roles";
+import { getPath } from "@/lib/json-path";
 import type { ResourceDef } from "@/types/meta";
 import type { Role } from "@prisma/client";
 
@@ -122,7 +123,7 @@ export function RecordDetail({
     <div className="max-w-3xl space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-medium">
-          {String(record[resource.titleField] ?? `#${recordId}`)}
+          {String(getPath(record, resource.titleField) ?? `#${recordId}`)}
         </h2>
         <div className="flex gap-2">
           {canUpdate &&
@@ -160,7 +161,7 @@ export function RecordDetail({
                     {field.label}
                   </dt>
                   <dd className="text-sm sm:col-span-2">
-                    <CellRenderer field={field} value={record[field.key]} />
+                    <CellRenderer field={field} value={getPath(record, field.key)} />
                   </dd>
                 </div>
               </div>

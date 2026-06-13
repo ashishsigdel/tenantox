@@ -237,6 +237,10 @@ export function MenuBuilderClient({
   function renderList(parentId: string | null, list: ItemRow[], depth: number) {
     return (
       <DndContext
+        // Stable id keeps dnd-kit's generated `aria-describedby` identical on
+        // server and client (otherwise its internal counter mismatches and
+        // React reports a hydration error).
+        id={`menu-dnd-${parentId ?? "root"}`}
         sensors={sensors}
         collisionDetection={closestCenter}
         onDragEnd={makeDragEnd(parentId, list)}
