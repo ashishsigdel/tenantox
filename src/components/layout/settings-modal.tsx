@@ -2,47 +2,99 @@
 
 import { Suspense, useCallback, useEffect } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Loader2, X } from "lucide-react";
+import { ChevronLeft, Loader2, X } from "lucide-react";
 import dynamic from "next/dynamic";
 
 import { SettingsNav } from "@/components/layout/settings-nav";
 
 const AccountSection = dynamic(() =>
-  import("@/components/settings/account-section").then((m) => ({ default: m.AccountSection })),
+  import("@/components/settings/account-section").then((m) => ({
+    default: m.AccountSection,
+  })),
 );
 const SecuritySection = dynamic(() =>
-  import("@/components/settings/security-section").then((m) => ({ default: m.SecuritySection })),
+  import("@/components/settings/security-section").then((m) => ({
+    default: m.SecuritySection,
+  })),
 );
 const AppearanceSection = dynamic(() =>
-  import("@/components/settings/appearance-section").then((m) => ({ default: m.AppearanceSection })),
+  import("@/components/settings/appearance-section").then((m) => ({
+    default: m.AppearanceSection,
+  })),
 );
 const NotificationsSection = dynamic(() =>
-  import("@/components/settings/notifications-section").then((m) => ({ default: m.NotificationsSection })),
+  import("@/components/settings/notifications-section").then((m) => ({
+    default: m.NotificationsSection,
+  })),
 );
 const ConnectionsSection = dynamic(() =>
-  import("@/components/settings/connections-section").then((m) => ({ default: m.ConnectionsSection })),
+  import("@/components/settings/connections-section").then((m) => ({
+    default: m.ConnectionsSection,
+  })),
 );
 const PagesSection = dynamic(() =>
-  import("@/components/settings/pages-section").then((m) => ({ default: m.PagesSection })),
+  import("@/components/settings/pages-section").then((m) => ({
+    default: m.PagesSection,
+  })),
+);
+const PageBuilderSection = dynamic(() =>
+  import("@/components/settings/page-builder-section").then((m) => ({
+    default: m.PageBuilderSection,
+  })),
+);
+const NewPageSection = dynamic(() =>
+  import("@/components/settings/new-page-section").then((m) => ({
+    default: m.NewPageSection,
+  })),
+);
+const ResourceBuilderSection = dynamic(() =>
+  import("@/components/settings/resource-builder-section").then((m) => ({
+    default: m.ResourceBuilderSection,
+  })),
 );
 const UsersSection = dynamic(() =>
-  import("@/components/settings/users-section").then((m) => ({ default: m.UsersSection })),
+  import("@/components/settings/users-section").then((m) => ({
+    default: m.UsersSection,
+  })),
 );
 const MenuSection = dynamic(() =>
-  import("@/components/settings/menu-section").then((m) => ({ default: m.MenuSection })),
+  import("@/components/settings/menu-section").then((m) => ({
+    default: m.MenuSection,
+  })),
 );
 const ActivitySection = dynamic(() =>
-  import("@/components/settings/activity-section").then((m) => ({ default: m.ActivitySection })),
+  import("@/components/settings/activity-section").then((m) => ({
+    default: m.ActivitySection,
+  })),
 );
 const BackupSection = dynamic(() =>
-  import("@/components/settings/backup-section").then((m) => ({ default: m.BackupSection })),
+  import("@/components/settings/backup-section").then((m) => ({
+    default: m.BackupSection,
+  })),
 );
 
 type SectionKey =
-  | "account" | "security" | "appearance" | "notifications"
-  | "connections" | "pages" | "menu" | "users" | "activity" | "backup";
+  | "account"
+  | "security"
+  | "appearance"
+  | "notifications"
+  | "connections"
+  | "pages"
+  | "resources"
+  | "menu"
+  | "users"
+  | "activity"
+  | "backup";
 
-const ADMIN_SECTIONS = new Set<SectionKey>(["connections", "pages", "menu", "users", "activity", "backup"]);
+const ADMIN_SECTIONS = new Set<SectionKey>([
+  "connections",
+  "pages",
+  "resources",
+  "menu",
+  "users",
+  "activity",
+  "backup",
+]);
 
 const SECTION_MAP: Record<SectionKey, React.ComponentType> = {
   account: AccountSection,
@@ -51,6 +103,7 @@ const SECTION_MAP: Record<SectionKey, React.ComponentType> = {
   notifications: NotificationsSection,
   connections: ConnectionsSection,
   pages: PagesSection,
+  resources: ResourceBuilderSection,
   menu: MenuSection,
   users: UsersSection,
   activity: ActivitySection,
@@ -71,10 +124,16 @@ function SettingsModalInner({ isAdmin }: { isAdmin: boolean }) {
   const searchParams = useSearchParams();
 
   const section = searchParams.get("settings") as SectionKey | null;
+  const subId = searchParams.get("id");
+  const subView = searchParams.get("view");
 
   const close = useCallback(() => {
     router.replace(pathname);
   }, [router, pathname]);
+
+  const goBack = useCallback(() => {
+    router.replace(`${pathname}?settings=${section}`);
+  }, [router, pathname, section]);
 
   useEffect(() => {
     if (!section) return;
@@ -90,10 +149,25 @@ function SettingsModalInner({ isAdmin }: { isAdmin: boolean }) {
   }, [section, close]);
 
   if (!section) return null;
-
-  const SectionComponent = SECTION_MAP[section];
-  if (!SectionComponent) return null;
   if (ADMIN_SECTIONS.has(section) && !isAdmin) return null;
+
+  let SectionComponent: React.ComponentType | null = null;
+  let isSubView = false;
+
+  if (section === "pages" && subId) {
+    SectionComponent = PageBuilderSection;
+    isSubView = true;
+  } else if (section === "pages" && subView === "new") {
+    SectionComponent = NewPageSection;
+    isSubView = true;
+  } else if (section === "resources" && subId) {
+    SectionComponent = ResourceBuilderSection;
+    isSubView = true;
+  } else {
+    SectionComponent = SECTION_MAP[section] ?? null;
+  }
+
+  if (!SectionComponent) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center sm:p-6">
@@ -105,14 +179,28 @@ function SettingsModalInner({ isAdmin }: { isAdmin: boolean }) {
         className="relative flex h-full w-full overflow-hidden bg-background shadow-lg ring-1 ring-border sm:h-[calc(100vh-4rem)] sm:max-w-[calc(100%-4rem)] sm:rounded-xl"
       >
         <aside className="flex w-48 shrink-0 flex-col gap-3 border-r bg-sidebar p-3 sm:w-60 sm:p-4">
-          <h2 className="px-2 text-sm font-semibold text-sidebar-foreground">Settings</h2>
+          <h2 className="px-2 text-sm font-semibold text-sidebar-foreground">
+            Settings
+          </h2>
           <div className="min-h-0 flex-1 overflow-y-auto">
             <SettingsNav isAdmin={isAdmin} activeSection={section} />
           </div>
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex h-12 shrink-0 items-center justify-end border-b px-3">
+          <div className="flex h-12 shrink-0 items-center justify-between border-b px-3">
+            {isSubView ? (
+              <button
+                type="button"
+                onClick={goBack}
+                className="flex items-center gap-1 rounded-md px-2 py-1 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                <ChevronLeft className="size-4" />
+                Back
+              </button>
+            ) : (
+              <div />
+            )}
             <button
               type="button"
               onClick={close}

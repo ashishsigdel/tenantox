@@ -46,6 +46,11 @@ export function WorkspaceTransfer() {
               "Re-enter connection secrets (API keys) — those aren't included in exports.",
           },
         );
+        if (result.warnings?.length) {
+          for (const warning of result.warnings) {
+            toast.warning(warning, { duration: 10000 });
+          }
+        }
         router.refresh();
       } else {
         toast.error(result.error);

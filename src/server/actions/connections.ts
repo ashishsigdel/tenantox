@@ -228,7 +228,7 @@ export async function listConnections(): Promise<ConnectionRow[]> {
   const rows = await prisma.apiConnection.findMany({
     where: { workspaceId },
     orderBy: { createdAt: "asc" },
-    include: { _count: { select: { resources: true } } },
+    include: { _count: { select: { resources: { where: { workspaceId } } } } },
   });
   return rows.map((row) => ({
     id: row.id,

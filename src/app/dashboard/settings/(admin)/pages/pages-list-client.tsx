@@ -116,7 +116,7 @@ export function PagesListClient({
                       </Link>
                     </Button>
                     <Button variant="ghost" size="icon" className="size-8" asChild>
-                      <Link href={`/dashboard/settings/pages/${page.id}`}>
+                      <Link href={`?settings=pages&id=${page.id}`}>
                         <Pencil className="size-4" />
                       </Link>
                     </Button>

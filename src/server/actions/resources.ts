@@ -11,6 +11,7 @@ import {
   type ActionResult,
 } from "@/server/guard";
 import { Prisma } from "@prisma/client";
+import { toResourceDef } from "@/lib/resources";
 
 /** Throws unless the resource exists in the given workspace. */
 async function assertResourceInWorkspace(resourceId: string, workspaceId: string) {
@@ -305,4 +306,43 @@ export async function reorderFields(
     );
     revalidatePath("/dashboard/settings/resources");
   });
+}
+
+/** Returns all data needed by the resource builder modal section. */
+export async function getResourceForBuilder(id: string) {
+  const { workspaceId } = await requireWorkspaceRole("ADMIN");
+  const [row, connections, allResources] = await Promise.all([
+    prisma.resource.findFirst({
+      where: { id, workspaceId },
+      include: { fields: true },
+    }),
+    prisma.apiConnection.findMany({
+      where: { workspaceId },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+    prisma.resource.findMany({
+      where: { workspaceId },
+      select: { slug: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+  ]);
+  if (!row) throw new Error("Resource not found");
+
+  const def = toResourceDef(row);
+  const initial: ResourceInput = {
+    id: def.id,
+    name: def.name,
+    slug: def.slug,
+    icon: def.icon ?? "",
+    apiConnectionId: def.apiConnectionId,
+    endpoints: def.endpoints,
+    primaryKeyField: def.primaryKeyField,
+    titleField: def.titleField,
+    capabilities: def.capabilities,
+    permissions: def.permissions,
+    apiMapping: def.apiMapping,
+  };
+
+  return { def, initial, connections, allResources };
 }

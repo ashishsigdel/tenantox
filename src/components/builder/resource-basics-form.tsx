@@ -117,10 +117,12 @@ export function ResourceBasicsForm({
   initial,
   connections,
   isNew,
+  onCreated,
 }: {
   initial: ResourceInput;
   connections: { id: string; name: string }[];
   isNew?: boolean;
+  onCreated?: (id: string) => void;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -194,7 +196,11 @@ export function ResourceBasicsForm({
       if (result.ok) {
         toast.success(isNew ? "Resource created — now add fields" : "Resource saved");
         if (isNew && result.id) {
-          router.push(`/dashboard/settings/resources/${result.id}?tab=fields`);
+          if (onCreated) {
+            onCreated(result.id);
+          } else {
+            router.push(`/dashboard/settings/resources/${result.id}?tab=fields`);
+          }
         } else {
           router.refresh();
         }

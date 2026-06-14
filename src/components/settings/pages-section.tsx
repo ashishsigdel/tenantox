@@ -36,7 +36,7 @@ export function PagesSection() {
           </p>
         </div>
         <Button size="sm" asChild>
-          <Link href="/dashboard/settings/pages/new">
+          <Link href="?settings=pages&view=new">
             <Plus className="size-4" /> New page
           </Link>
         </Button>

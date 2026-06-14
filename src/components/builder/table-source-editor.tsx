@@ -81,7 +81,7 @@ export function TableSourceEditor({
         </p>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" asChild>
-            <Link href={`/dashboard/settings/resources/${value}`}>
+            <Link href={`?settings=resources&id=${value}`}>
               <ExternalLink className="size-4" /> Edit data source
             </Link>
           </Button>
@@ -109,7 +109,7 @@ export function TableSourceEditor({
       if (result.ok && result.id) {
         toast.success("Data source created — opening editor for fields");
         onChange(result.id);
-        router.push(`/dashboard/settings/resources/${result.id}?tab=fields`);
+        router.push(`?settings=resources&id=${result.id}&tab=fields`);
       } else if (!result.ok) {
         toast.error(result.error);
       }

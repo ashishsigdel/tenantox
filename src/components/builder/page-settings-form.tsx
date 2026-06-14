@@ -29,9 +29,11 @@ import type { Role } from "@prisma/client";
 export function PageSettingsForm({
   initial,
   isNew,
+  onCreated,
 }: {
   initial: PageInput;
   isNew?: boolean;
+  onCreated?: (id: string) => void;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -47,7 +49,11 @@ export function PageSettingsForm({
       if (result.ok) {
         toast.success(isNew ? "Page created — now add blocks" : "Page saved");
         if (isNew && result.id) {
-          router.push(`/dashboard/settings/pages/${result.id}`);
+          if (onCreated) {
+            onCreated(result.id);
+          } else {
+            router.push(`/dashboard/settings/pages/${result.id}`);
+          }
         } else {
           router.refresh();
         }

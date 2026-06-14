@@ -52,6 +52,7 @@ export async function exportWorkspace(): Promise<string> {
         // Secrets are intentionally NOT exported.
       })),
       resources: resources.map((r) => ({
+        id: r.id,
         name: r.name,
         slug: r.slug,
         icon: r.icon,
@@ -103,6 +104,7 @@ const importSchema = z.object({
   ),
   resources: z.array(
     z.object({
+      id: z.string().optional(), // source workspace ID, used for layout rewriting
       name: z.string(),
       slug: z.string(),
       icon: z.string().nullable(),
@@ -152,7 +154,7 @@ export type ImportCounts = {
 };
 
 export type ImportResult =
-  | { ok: true; counts: ImportCounts }
+  | { ok: true; counts: ImportCounts; warnings?: string[] }
   | { ok: false; error: string };
 
 export async function importWorkspace(json: string): Promise<ImportResult> {
@@ -188,6 +190,11 @@ export async function importWorkspace(json: string): Promise<ImportResult> {
     }
 
     // Resources: upsert by (workspace, slug); fields are replaced wholesale.
+    // Build oldId→newId map so page layouts can be rewritten below, plus the
+    // set of live resource IDs in this workspace so we can detect any layout
+    // reference that fails to relink (e.g. exports that predate resource IDs).
+    const resourceIdMap = new Map<string, string>();
+    const validResourceIds = new Set<string>();
     let resourcesImported = 0;
     for (const res of parsed.resources) {
       const connectionId = connectionIds.get(res.connectionName);
@@ -210,6 +217,11 @@ export async function importWorkspace(json: string): Promise<ImportResult> {
         ? await prisma.resource.update({ where: { id: existing.id }, data })
         : await prisma.resource.create({ data: { ...data, workspaceId } });
 
+      validResourceIds.add(saved.id);
+      if (res.id && res.id !== saved.id) {
+        resourceIdMap.set(res.id, saved.id);
+      }
+
       await prisma.fieldDefinition.deleteMany({
         where: { resourceId: saved.id },
       });
@@ -224,6 +236,26 @@ export async function importWorkspace(json: string): Promise<ImportResult> {
       resourcesImported++;
     }
 
+    // Collects layout references that point at a resource ID not present in
+    // this workspace after rewriting, so a broken import surfaces instead of
+    // silently producing "Resource not found" pages.
+    const unresolvedRefs: { pageSlug: string; resourceId: string }[] = [];
+
+    /** Rewrites old→new resource IDs in a layout and reports unresolved refs. */
+    function rewriteLayout(pageSlug: string, layout: unknown): Prisma.InputJsonValue {
+      let json = JSON.stringify(layout ?? null);
+      for (const [oldId, newId] of resourceIdMap) {
+        json = json.replaceAll(oldId, newId);
+      }
+      for (const match of json.matchAll(/"resourceId":\s*"([^"]+)"/g)) {
+        const id = match[1];
+        if (!validResourceIds.has(id)) {
+          unresolvedRefs.push({ pageSlug, resourceId: id });
+        }
+      }
+      return JSON.parse(json) as Prisma.InputJsonValue;
+    }
+
     // Pages: upsert by (workspace, slug); menu items link to them by slug below.
     const pageIds = new Map<string, string>();
     for (const page of parsed.pages ?? []) {
@@ -233,7 +265,7 @@ export async function importWorkspace(json: string): Promise<ImportResult> {
         icon: page.icon,
         description: page.description,
         viewRole: page.viewRole,
-        layout: (page.layout ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+        layout: rewriteLayout(page.slug, page.layout ?? Prisma.JsonNull),
       };
       const existing = await prisma.page.findUnique({
         where: { workspaceId_slug: { workspaceId, slug: page.slug } },
@@ -306,7 +338,18 @@ export async function importWorkspace(json: string): Promise<ImportResult> {
       ...counts,
     });
     revalidatePath("/dashboard", "layout");
-    return { ok: true, counts };
+
+    // Surface pages whose table/resource blocks couldn't be relinked. This
+    // happens for files exported before resource IDs were included; those
+    // blocks must be re-pointed manually (or re-exported from the new build).
+    const warnings = unresolvedRefs.length
+      ? [
+          `${unresolvedRefs.length} page block(s) reference a resource that wasn't found and need re-linking in the page builder: ` +
+            unresolvedRefs.map((r) => r.pageSlug).join(", "),
+        ]
+      : undefined;
+
+    return { ok: true, counts, warnings };
   } catch (e) {
     console.error("importWorkspace failed", e);
     return {

@@ -231,3 +231,35 @@ export async function listPages(): Promise<PageRow[]> {
     blockCount: toPageLayout(row.layout).root.children.length,
   }));
 }
+
+/** Returns all data needed by the page builder modal section. */
+export async function getPageForBuilder(id: string) {
+  const { workspaceId } = await requireWorkspaceRole("ADMIN");
+  const [row, connections, resources] = await Promise.all([
+    prisma.page.findFirst({ where: { id, workspaceId } }),
+    prisma.apiConnection.findMany({
+      where: { workspaceId },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+    prisma.resource.findMany({
+      where: { workspaceId },
+      select: { id: true, name: true, slug: true },
+      orderBy: { name: "asc" },
+    }),
+  ]);
+  if (!row) throw new Error("Page not found");
+
+  const { toPageDef } = await import("@/lib/pages");
+  const page = toPageDef(row);
+  const initial: PageInput = {
+    id: page.id,
+    name: page.name,
+    slug: page.slug,
+    icon: page.icon ?? "",
+    description: page.description ?? "",
+    viewRole: page.viewRole,
+  };
+
+  return { page, initial, connections, resources };
+}
