@@ -3,7 +3,7 @@ import { toResourceDef } from "@/lib/resources";
 import { hasRole } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 import { isGroup } from "@/types/meta";
-import type { BlockWidth, LayoutNode, PageDef, ResourceDef } from "@/types/meta";
+import type { BlockDef, BlockWidth, LayoutNode, PageDef, ResourceDef } from "@/types/meta";
 import type { Role } from "@prisma/client";
 
 import { BlockRenderer } from "./block-renderer";
@@ -38,11 +38,10 @@ export async function PageRenderer({
   // Preload the ResourceDef for every top-level resource-backed Table block.
   // Tables inside a group are read-only (no resource), so they're skipped.
   const resourceIds = visible
-    .filter(
-      (n) =>
-        !isGroup(n) &&
-        n.type === "TABLE" &&
-        n.dataSource?.mode === "resource",
+    .filter((n): n is BlockDef =>
+      !isGroup(n) &&
+      n.type === "TABLE" &&
+      n.dataSource?.mode === "resource",
     )
     .map((n) => (n.dataSource as { resourceId: string }).resourceId);
 
