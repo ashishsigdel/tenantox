@@ -52,6 +52,26 @@ const passwordSchema = z
 
 export type PasswordInput = z.infer<typeof passwordSchema>;
 
+/** Returns the signed-in user's profile for the settings modal. */
+export async function getMyProfile(): Promise<{
+  name: string;
+  email: string;
+  role: string;
+}> {
+  const session = await auth();
+  if (!session?.user) throw new Error("Not authenticated");
+  const user = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: { name: true, email: true },
+  });
+  if (!user) throw new Error("User not found");
+  return {
+    name: user.name,
+    email: user.email ?? "",
+    role: session.user.role ?? "VIEWER",
+  };
+}
+
 /** Changes the signed-in user's own password. */
 export async function changePassword(
   input: PasswordInput,

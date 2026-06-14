@@ -59,9 +59,11 @@ interface MemberRow {
 export function UsersClient({
   members,
   currentUserId,
+  onRefresh,
 }: {
   members: MemberRow[];
   currentUserId: string;
+  onRefresh?: () => void;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -78,7 +80,7 @@ export function UsersClient({
         setAddOpen(false);
         setEmail("");
         setRole("VIEWER");
-        router.refresh();
+        onRefresh?.();
       } else {
         toast.error(result.error);
       }
@@ -90,7 +92,7 @@ export function UsersClient({
       const result = await updateMemberRole({ targetUserId: userId, role: nextRole });
       if (result.ok) {
         toast.success("Role updated");
-        router.refresh();
+        onRefresh?.();
       } else {
         toast.error(result.error);
       }
@@ -105,7 +107,7 @@ export function UsersClient({
       const result = await removeMember(id);
       if (result.ok) {
         toast.success("Member removed");
-        router.refresh();
+        onRefresh?.();
       } else {
         toast.error(result.error);
       }

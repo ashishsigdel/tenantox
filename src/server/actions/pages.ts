@@ -11,7 +11,8 @@ import {
   runAction,
   type ActionResult,
 } from "@/server/guard";
-import { Prisma } from "@prisma/client";
+import { Prisma, type Role } from "@prisma/client";
+import { toPageLayout } from "@/lib/pages";
 
 /** Throws unless the page exists in the given workspace. */
 async function assertPageInWorkspace(pageId: string, workspaceId: string) {
@@ -203,4 +204,30 @@ export async function savePageLayout(
     revalidatePath("/dashboard/settings/pages");
     revalidatePath("/dashboard/p", "layout");
   });
+}
+
+export interface PageRow {
+  id: string;
+  name: string;
+  slug: string;
+  icon: string | null;
+  viewRole: Role;
+  blockCount: number;
+}
+
+/** Returns all pages for the active workspace (modal data fetch). */
+export async function listPages(): Promise<PageRow[]> {
+  const { workspaceId } = await requireWorkspaceRole("ADMIN");
+  const rows = await prisma.page.findMany({
+    where: { workspaceId },
+    orderBy: { createdAt: "asc" },
+  });
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    slug: row.slug,
+    icon: row.icon,
+    viewRole: row.viewRole,
+    blockCount: toPageLayout(row.layout).root.children.length,
+  }));
 }

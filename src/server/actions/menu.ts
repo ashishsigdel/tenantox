@@ -10,7 +10,7 @@ import {
   runAction,
   type ActionResult,
 } from "@/server/guard";
-import { Prisma } from "@prisma/client";
+import { Prisma, type MenuItemType, type Role } from "@prisma/client";
 
 const menuItemSchema = z.object({
   id: z.string().optional(),
@@ -117,4 +117,57 @@ export async function reorderMenu(
     );
     revalidatePath("/dashboard", "layout");
   });
+}
+
+export interface MenuItemRow {
+  id: string;
+  label: string;
+  icon: string | null;
+  type: MenuItemType;
+  resourceId: string | null;
+  pageId: string | null;
+  href: string | null;
+  parentId: string | null;
+  order: number;
+  visibleToRoles: Role[];
+}
+
+export interface MenuBuilderData {
+  items: MenuItemRow[];
+  resources: { id: string; name: string }[];
+  pages: { id: string; name: string }[];
+}
+
+/** Returns all data needed by the menu builder (modal data fetch). */
+export async function getMenuBuilderData(): Promise<MenuBuilderData> {
+  const { workspaceId } = await requireWorkspaceRole("ADMIN");
+  const [items, resources, pages] = await Promise.all([
+    prisma.menuItem.findMany({ where: { workspaceId }, orderBy: { order: "asc" } }),
+    prisma.resource.findMany({
+      where: { workspaceId },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+    prisma.page.findMany({
+      where: { workspaceId },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+  ]);
+  return {
+    items: items.map((item) => ({
+      id: item.id,
+      label: item.label,
+      icon: item.icon,
+      type: item.type,
+      resourceId: item.resourceId,
+      pageId: item.pageId,
+      href: item.href,
+      parentId: item.parentId,
+      order: item.order,
+      visibleToRoles: (item.visibleToRoles as Role[] | null) ?? [],
+    })),
+    resources,
+    pages,
+  };
 }

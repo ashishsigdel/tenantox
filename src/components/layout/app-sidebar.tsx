@@ -22,7 +22,6 @@ import {
 } from "@/components/ui/sidebar";
 import { DynamicIcon } from "@/lib/icons";
 import type { MenuNode } from "@/lib/menu";
-import { SETTINGS_BG_KEY } from "@/components/layout/settings-modal";
 
 export function AppSidebar({ menu }: { menu: MenuNode[] }) {
   const pathname = usePathname();
@@ -32,14 +31,6 @@ export function AppSidebar({ menu }: { menu: MenuNode[] }) {
       ? pathname === "/dashboard"
       : pathname.startsWith(href));
 
-  // Remember where the user was so the settings modal can return there on close.
-  const openSettings = () => {
-    try {
-      sessionStorage.setItem(SETTINGS_BG_KEY, pathname);
-    } catch {
-      // ignore unavailable sessionStorage
-    }
-  };
 
   function renderLeaf(node: MenuNode) {
     if (node.type === "DIVIDER") {
@@ -112,11 +103,8 @@ export function AppSidebar({ menu }: { menu: MenuNode[] }) {
       <SidebarFooter>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton
-              asChild
-              isActive={isActive("/dashboard/settings")}
-            >
-              <Link href="/dashboard/settings/account" onClick={openSettings}>
+            <SidebarMenuButton asChild>
+              <Link href="?settings=account">
                 <Settings />
                 <span>Settings</span>
               </Link>

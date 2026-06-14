@@ -148,10 +148,12 @@ export function MenuBuilderClient({
   items,
   resources,
   pages,
+  onRefresh,
 }: {
   items: ItemRow[];
   resources: { id: string; name: string }[];
   pages: { id: string; name: string }[];
+  onRefresh?: () => void;
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -174,6 +176,7 @@ export function MenuBuilderClient({
       const result = await reorderMenu([{ parentId, orderedIds }]);
       if (!result.ok) toast.error(result.error);
       router.refresh();
+      onRefresh?.();
     });
   }
 
@@ -216,6 +219,7 @@ export function MenuBuilderClient({
         toast.success(draft.id ? "Menu item saved" : "Menu item added");
         setDialogOpen(false);
         router.refresh();
+        onRefresh?.();
       } else {
         toast.error(result.error);
       }
@@ -228,6 +232,7 @@ export function MenuBuilderClient({
       if (result.ok) {
         toast.success("Menu item deleted");
         router.refresh();
+        onRefresh?.();
       } else {
         toast.error(result.error);
       }

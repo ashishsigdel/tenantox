@@ -1,16 +1,16 @@
 import { getWorkspaceContext } from "@/lib/session";
 import { getMenuForRole } from "@/lib/menu";
 import { listMyWorkspaces } from "@/server/actions/workspaces";
+import { hasRole } from "@/lib/roles";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { Topbar } from "@/components/layout/topbar";
+import { SettingsModal } from "@/components/layout/settings-modal";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 
 export default async function DashboardLayout({
   children,
-  modal,
 }: {
   children: React.ReactNode;
-  modal: React.ReactNode;
 }) {
   const ctx = await getWorkspaceContext();
 
@@ -18,6 +18,8 @@ export default async function DashboardLayout({
     getMenuForRole(ctx.workspaceId, ctx.role),
     listMyWorkspaces(),
   ]);
+
+  const isAdmin = hasRole(ctx.role, "ADMIN");
 
   return (
     <SidebarProvider>
@@ -30,7 +32,7 @@ export default async function DashboardLayout({
         />
         <main className="flex-1 p-4 md:p-6">{children}</main>
       </SidebarInset>
-      {modal}
+      <SettingsModal isAdmin={isAdmin} />
     </SidebarProvider>
   );
 }

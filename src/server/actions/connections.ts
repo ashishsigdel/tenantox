@@ -213,3 +213,28 @@ export async function testConnection(input: {
     };
   }
 }
+
+export interface ConnectionRow {
+  id: string;
+  name: string;
+  baseUrl: string;
+  authType: "NONE" | "BEARER_TOKEN" | "API_KEY_HEADER" | "BASIC";
+  resourceCount: number;
+}
+
+/** Returns all API connections for the active workspace (modal data fetch). */
+export async function listConnections(): Promise<ConnectionRow[]> {
+  const { workspaceId } = await requireWorkspaceRole("ADMIN");
+  const rows = await prisma.apiConnection.findMany({
+    where: { workspaceId },
+    orderBy: { createdAt: "asc" },
+    include: { _count: { select: { resources: true } } },
+  });
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    baseUrl: row.baseUrl,
+    authType: row.authType,
+    resourceCount: row._count.resources,
+  }));
+}

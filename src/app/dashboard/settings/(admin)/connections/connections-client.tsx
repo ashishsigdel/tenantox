@@ -75,8 +75,10 @@ const EMPTY: ConnectionInput = {
 
 export function ConnectionsClient({
   connections,
+  onRefresh,
 }: {
   connections: ConnectionRow[];
+  onRefresh?: () => void;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -117,7 +119,7 @@ export function ConnectionsClient({
       if (result.ok) {
         toast.success(draft.id ? "Connection updated" : "Connection created");
         setDialogOpen(false);
-        router.refresh();
+        onRefresh?.();
       } else {
         toast.error(result.error);
       }
@@ -153,7 +155,7 @@ export function ConnectionsClient({
       const result = await deleteConnection(id);
       if (result.ok) {
         toast.success("Connection deleted");
-        router.refresh();
+        onRefresh?.();
       } else {
         toast.error(result.error);
       }

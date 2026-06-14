@@ -23,10 +23,12 @@ export function AccountClient({
   name: initialName,
   email,
   role,
+  onRefresh,
 }: {
   name: string;
   email: string;
   role: string;
+  onRefresh?: () => void;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -40,6 +42,7 @@ export function AccountClient({
       if (result.ok) {
         toast.success("Profile updated");
         router.refresh();
+        onRefresh?.();
       } else {
         toast.error(result.error);
       }

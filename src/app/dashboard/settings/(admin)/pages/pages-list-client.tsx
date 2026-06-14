@@ -39,7 +39,13 @@ interface PageRow {
   blockCount: number;
 }
 
-export function PagesListClient({ pages }: { pages: PageRow[] }) {
+export function PagesListClient({
+  pages,
+  onRefresh,
+}: {
+  pages: PageRow[];
+  onRefresh?: () => void;
+}) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [deleteTarget, setDeleteTarget] = useState<PageRow | null>(null);
@@ -53,6 +59,7 @@ export function PagesListClient({ pages }: { pages: PageRow[] }) {
       if (result.ok) {
         toast.success("Page deleted");
         router.refresh();
+        onRefresh?.();
       } else {
         toast.error(result.error);
       }
