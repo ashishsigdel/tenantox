@@ -51,6 +51,11 @@ const DASHBOARD: NavGroup = {
     { label: "Menu", href: "/dashboard/settings/menu", icon: "list-tree" },
     { label: "Users", href: "/dashboard/settings/users", icon: "users" },
     { label: "Activity", href: "/dashboard/settings/activity", icon: "history" },
+    {
+      label: "Backup",
+      href: "/dashboard/settings/backup",
+      icon: "database-backup",
+    },
   ],
 };
 

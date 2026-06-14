@@ -20,6 +20,7 @@ const SECTION_ROOTS = [
   "/dashboard/settings/menu",
   "/dashboard/settings/users",
   "/dashboard/settings/activity",
+  "/dashboard/settings/backup",
 ];
 
 export const SETTINGS_BG_KEY = "settings:bg";

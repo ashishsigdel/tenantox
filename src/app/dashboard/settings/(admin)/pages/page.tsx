@@ -5,7 +5,6 @@ import { getWorkspaceContext } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { toPageLayout } from "@/lib/pages";
 import { Button } from "@/components/ui/button";
-import { WorkspaceTransfer } from "@/components/builder/workspace-transfer";
 import { PagesListClient } from "./pages-list-client";
 
 export const metadata = { title: "Pages" };
@@ -27,14 +26,11 @@ export default async function PagesSettingsPage() {
             each bound to an API endpoint.
           </p>
         </div>
-        <div className="flex gap-2">
-          <WorkspaceTransfer />
-          <Button size="sm" asChild>
-            <Link href="/dashboard/settings/pages/new">
-              <Plus className="size-4" /> New page
-            </Link>
-          </Button>
-        </div>
+        <Button size="sm" asChild>
+          <Link href="/dashboard/settings/pages/new">
+            <Plus className="size-4" /> New page
+          </Link>
+        </Button>
       </div>
 
       <PagesListClient

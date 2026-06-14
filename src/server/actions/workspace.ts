@@ -4,23 +4,20 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { prisma } from "@/lib/prisma";
-import {
-  logConfigChange,
-  requireWorkspaceRole,
-  runAction,
-  type ActionResult,
-} from "@/server/guard";
+import { logConfigChange, requireWorkspaceRole } from "@/server/guard";
 import { Prisma } from "@prisma/client";
 
 /**
  * Workspace export/import: moves the full configuration (connections without
- * secrets, resources + fields, menu) between deployments as one JSON file.
+ * secrets, resources + fields, pages, menu) between deployments as one JSON
+ * file. Pages and the menu's page links are optional in the schema so files
+ * exported before pages were supported still import cleanly.
  */
 
 export async function exportWorkspace(): Promise<string> {
   const { workspaceId } = await requireWorkspaceRole("ADMIN");
 
-  const [connections, resources, menuItems] = await Promise.all([
+  const [connections, resources, pages, menuItems] = await Promise.all([
     prisma.apiConnection.findMany({
       where: { workspaceId },
       orderBy: { createdAt: "asc" },
@@ -30,10 +27,17 @@ export async function exportWorkspace(): Promise<string> {
       include: { fields: true, apiConnection: { select: { name: true } } },
       orderBy: { createdAt: "asc" },
     }),
+    prisma.page.findMany({
+      where: { workspaceId },
+      orderBy: { createdAt: "asc" },
+    }),
     prisma.menuItem.findMany({
       where: { workspaceId },
       orderBy: { order: "asc" },
-      include: { resource: { select: { slug: true } } },
+      include: {
+        resource: { select: { slug: true } },
+        page: { select: { slug: true } },
+      },
     }),
   ]);
 
@@ -61,12 +65,21 @@ export async function exportWorkspace(): Promise<string> {
           .sort((a, b) => a.order - b.order)
           .map(({ id: _id, resourceId: _rid, createdAt: _c, updatedAt: _u, ...field }) => field),
       })),
+      pages: pages.map((p) => ({
+        name: p.name,
+        slug: p.slug,
+        icon: p.icon,
+        description: p.description,
+        viewRole: p.viewRole,
+        layout: p.layout,
+      })),
       menu: menuItems.map((m) => ({
         label: m.label,
         icon: m.icon,
         type: m.type,
         order: m.order,
         resourceSlug: m.resource?.slug ?? null,
+        pageSlug: m.page?.slug ?? null,
         href: m.href,
         parentLabel: m.parentId
           ? (menuItems.find((p) => p.id === m.parentId)?.label ?? null)
@@ -102,13 +115,28 @@ const importSchema = z.object({
       fields: z.array(z.record(z.string(), z.unknown())),
     }),
   ),
+  // Pages are optional so files exported before pages were supported still import.
+  pages: z
+    .array(
+      z.object({
+        name: z.string(),
+        slug: z.string(),
+        icon: z.string().nullable(),
+        description: z.string().nullable(),
+        viewRole: z.enum(["SUPER_ADMIN", "ADMIN", "EDITOR", "VIEWER"]),
+        layout: z.unknown(),
+      }),
+    )
+    .optional(),
   menu: z.array(
     z.object({
       label: z.string(),
       icon: z.string().nullable(),
-      type: z.enum(["GROUP", "RESOURCE", "LINK", "DIVIDER"]),
+      type: z.enum(["GROUP", "RESOURCE", "PAGE", "LINK", "DIVIDER"]),
       order: z.number(),
       resourceSlug: z.string().nullable(),
+      // Optional for back-compat with exports that predate page linking.
+      pageSlug: z.string().nullable().optional(),
       href: z.string().nullable(),
       parentLabel: z.string().nullable(),
       visibleToRoles: z.unknown(),
@@ -116,17 +144,34 @@ const importSchema = z.object({
   ),
 });
 
-export async function importWorkspace(json: string): Promise<ActionResult> {
-  return runAction(async () => {
-    const { userId, workspaceId } = await requireWorkspaceRole("SUPER_ADMIN");
+export type ImportCounts = {
+  connections: number;
+  resources: number;
+  pages: number;
+  menu: number;
+};
 
-    let parsed: z.infer<typeof importSchema>;
-    try {
-      parsed = importSchema.parse(JSON.parse(json));
-    } catch {
-      throw new Error("Not a valid workspace export file");
-    }
+export type ImportResult =
+  | { ok: true; counts: ImportCounts }
+  | { ok: false; error: string };
 
+export async function importWorkspace(json: string): Promise<ImportResult> {
+  let userId: string;
+  let workspaceId: string;
+  try {
+    ({ userId, workspaceId } = await requireWorkspaceRole("SUPER_ADMIN"));
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Not allowed" };
+  }
+
+  let parsed: z.infer<typeof importSchema>;
+  try {
+    parsed = importSchema.parse(JSON.parse(json));
+  } catch {
+    return { ok: false, error: "Not a valid workspace export file" };
+  }
+
+  try {
     // Connections: upsert by name within this workspace (secrets re-entered after).
     const connectionIds = new Map<string, string>();
     for (const conn of parsed.connections) {
@@ -143,6 +188,7 @@ export async function importWorkspace(json: string): Promise<ActionResult> {
     }
 
     // Resources: upsert by (workspace, slug); fields are replaced wholesale.
+    let resourcesImported = 0;
     for (const res of parsed.resources) {
       const connectionId = connectionIds.get(res.connectionName);
       if (!connectionId) continue;
@@ -175,10 +221,32 @@ export async function importWorkspace(json: string): Promise<ActionResult> {
           } as Prisma.FieldDefinitionUncheckedCreateInput,
         });
       }
+      resourcesImported++;
+    }
+
+    // Pages: upsert by (workspace, slug); menu items link to them by slug below.
+    const pageIds = new Map<string, string>();
+    for (const page of parsed.pages ?? []) {
+      const data = {
+        name: page.name,
+        slug: page.slug,
+        icon: page.icon,
+        description: page.description,
+        viewRole: page.viewRole,
+        layout: (page.layout ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+      };
+      const existing = await prisma.page.findUnique({
+        where: { workspaceId_slug: { workspaceId, slug: page.slug } },
+      });
+      const saved = existing
+        ? await prisma.page.update({ where: { id: existing.id }, data })
+        : await prisma.page.create({ data: { ...data, workspaceId } });
+      pageIds.set(page.slug, saved.id);
     }
 
     // Menu: replace this workspace's menu wholesale (config-only, safe to rebuild).
     await prisma.menuItem.deleteMany({ where: { workspaceId } });
+    let menuImported = 0;
     const parentIds = new Map<string, string>();
     for (const item of parsed.menu.filter((m) => !m.parentLabel)) {
       const resource = item.resourceSlug
@@ -194,11 +262,13 @@ export async function importWorkspace(json: string): Promise<ActionResult> {
           type: item.type,
           order: item.order,
           resourceId: resource?.id ?? null,
+          pageId: item.pageSlug ? (pageIds.get(item.pageSlug) ?? null) : null,
           href: item.href,
           visibleToRoles: (item.visibleToRoles ?? Prisma.JsonNull) as Prisma.InputJsonValue,
         },
       });
       parentIds.set(item.label, created.id);
+      menuImported++;
     }
     for (const item of parsed.menu.filter((m) => m.parentLabel)) {
       const resource = item.resourceSlug
@@ -214,18 +284,34 @@ export async function importWorkspace(json: string): Promise<ActionResult> {
           type: item.type,
           order: item.order,
           resourceId: resource?.id ?? null,
+          pageId: item.pageSlug ? (pageIds.get(item.pageSlug) ?? null) : null,
           href: item.href,
           parentId: parentIds.get(item.parentLabel!) ?? null,
           visibleToRoles: (item.visibleToRoles ?? Prisma.JsonNull) as Prisma.InputJsonValue,
         },
       });
+      menuImported++;
     }
+
+    const counts: ImportCounts = {
+      connections: connectionIds.size,
+      resources: resourcesImported,
+      pages: pageIds.size,
+      menu: menuImported,
+    };
 
     await logConfigChange(userId, workspaceId, {
       entity: "workspace",
       op: "import",
-      resources: parsed.resources.length,
+      ...counts,
     });
     revalidatePath("/dashboard", "layout");
-  });
+    return { ok: true, counts };
+  } catch (e) {
+    console.error("importWorkspace failed", e);
+    return {
+      ok: false,
+      error: e instanceof Error && e.message ? e.message : "Import failed",
+    };
+  }
 }

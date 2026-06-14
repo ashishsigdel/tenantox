@@ -35,8 +35,16 @@ export function WorkspaceTransfer() {
       const json = await file.text();
       const result = await importWorkspace(json);
       if (result.ok) {
+        const { connections, resources, pages, menu } = result.counts;
         toast.success(
-          "Workspace imported. Re-enter connection secrets if any were used.",
+          `Imported ${connections} connection${connections === 1 ? "" : "s"}, ` +
+            `${resources} resource${resources === 1 ? "" : "s"}, ` +
+            `${pages} page${pages === 1 ? "" : "s"}, ` +
+            `${menu} menu item${menu === 1 ? "" : "s"}.`,
+          {
+            description:
+              "Re-enter connection secrets (API keys) — those aren't included in exports.",
+          },
         );
         router.refresh();
       } else {
